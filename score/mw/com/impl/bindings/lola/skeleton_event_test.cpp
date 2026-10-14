@@ -26,6 +26,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,6 +37,8 @@ namespace
 {
 
 using ::testing::_;
+using ::testing::ElementsAre;
+using ::testing::Invoke;
 using ::testing::InvokeWithoutArgs;
 using ::testing::Not;
 using ::testing::Return;
@@ -226,6 +229,75 @@ TEST_F(SkeletonEventPrepareOfferFixture, RegisterEventNotificationExistenceChang
 
     // When offering a skeleton event
     std::ignore = skeleton_event_->PrepareOffer(std::nullopt);
+}
+
+TEST_F(SkeletonEventPrepareOfferFixture, ReceiveHandlerRegistrationChangedCallbackIsCalledOnRegistrationChange)
+{
+    // Given a valid QM skeleton event
+    InitialiseSkeletonEvent(fake_element_fq_id_, fake_event_name_, max_samples_, max_subscribers_, kEnforceMaxSamples);
+
+    // on which a callback for receive handler registration changes has been set
+    std::vector<bool> reported_registration_states{};
+    ASSERT_TRUE(skeleton_event_
+                    ->SetReceiveHandlerRegistrationChangedHandler(
+                        [&reported_registration_states](const bool registered) noexcept {
+                            reported_registration_states.push_back(registered);
+                        })
+                    .has_value());
+
+    // Expecting that a callback for tracking changes of existence of event-notifications for QM is registered
+    std::optional<IMessagePassingService::HandlerStatusChangeCallback> existence_changed_callback{};
+    EXPECT_CALL(message_passing_mock_,
+                RegisterEventNotificationExistenceChangedCallback(impl::QualityType::kASIL_QM, fake_element_fq_id_, _))
+        .WillOnce(Invoke([&existence_changed_callback](
+                             QualityType, ElementFqId, IMessagePassingService::HandlerStatusChangeCallback callback) {
+            existence_changed_callback.emplace(std::move(callback));
+        }));
+
+    // When offering the skeleton event
+    ASSERT_TRUE(skeleton_event_->PrepareOffer(std::nullopt).has_value());
+    ASSERT_TRUE(existence_changed_callback.has_value());
+
+    // and the first event-notification gets registered and the last one gets unregistered again
+    (*existence_changed_callback)(true);
+    (*existence_changed_callback)(false);
+
+    // Then the callback for receive handler registration changes is called with the same states
+    EXPECT_THAT(reported_registration_states, ElementsAre(true, false));
+}
+
+TEST_F(SkeletonEventPrepareOfferFixture, ReceiveHandlerRegistrationChangedCallbackIsNotCalledAfterUnset)
+{
+    // Given a valid QM skeleton event
+    InitialiseSkeletonEvent(fake_element_fq_id_, fake_event_name_, max_samples_, max_subscribers_, kEnforceMaxSamples);
+
+    // on which a callback for receive handler registration changes has been set and unset again
+    bool callback_called{false};
+    ASSERT_TRUE(skeleton_event_
+                    ->SetReceiveHandlerRegistrationChangedHandler([&callback_called](bool) noexcept {
+                        callback_called = true;
+                    })
+                    .has_value());
+    ASSERT_TRUE(skeleton_event_->UnsetReceiveHandlerRegistrationChangedHandler().has_value());
+
+    // Expecting that a callback for tracking changes of existence of event-notifications for QM is registered
+    std::optional<IMessagePassingService::HandlerStatusChangeCallback> existence_changed_callback{};
+    EXPECT_CALL(message_passing_mock_,
+                RegisterEventNotificationExistenceChangedCallback(impl::QualityType::kASIL_QM, fake_element_fq_id_, _))
+        .WillOnce(Invoke([&existence_changed_callback](
+                             QualityType, ElementFqId, IMessagePassingService::HandlerStatusChangeCallback callback) {
+            existence_changed_callback.emplace(std::move(callback));
+        }));
+
+    // When offering the skeleton event
+    ASSERT_TRUE(skeleton_event_->PrepareOffer(std::nullopt).has_value());
+    ASSERT_TRUE(existence_changed_callback.has_value());
+
+    // and the first event-notification gets registered
+    (*existence_changed_callback)(true);
+
+    // Then the unset callback for receive handler registration changes is not called
+    EXPECT_FALSE(callback_called);
 }
 
 TEST_F(SkeletonEventPrepareOfferFixture, SubscriptionsAcceptedIfMaxSamplesCanBeProvided)

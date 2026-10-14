@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -777,6 +778,157 @@ TEST(SkeletonEventGetLatestSampleTest, GetLatestSamplePropagatesErrorFromBinding
     // Then the result contains an error that the binding failed
     ASSERT_FALSE(latest_sample_result.has_value());
     EXPECT_EQ(latest_sample_result.error(), ComErrc::kBindingFailure);
+}
+
+TEST(SkeletonEventReceiveHandlerRegistrationChangedTest, SetHandsOverCallbackToBinding)
+{
+    RecordProperty("lobster-tracing", "Communication.SkeletonEventClassSetReceiveHandlerRegistrationChangedHandler");
+    RecordProperty("Description",
+                   "Checks that SetReceiveHandlerRegistrationChangedHandler() hands over the callback to the binding.");
+    RecordProperty("TestType", "Requirements-based test");
+    RecordProperty("DerivationTechnique", "Analysis of requirements");
+
+    RuntimeMockGuard runtime_mock_guard{};
+    ON_CALL(runtime_mock_guard.runtime_mock_, GetTracingFilterConfig()).WillByDefault(Return(nullptr));
+    SkeletonEventBindingFactoryMockGuard skeleton_event_binding_factory_mock_guard{};
+
+    // Expecting that a SkeletonEvent binding is created
+    auto skeleton_event_binding_mock_ptr = std::make_unique<mock_binding::SkeletonEvent>();
+    auto& skeleton_event_binding_mock = *skeleton_event_binding_mock_ptr;
+    EXPECT_CALL(skeleton_event_binding_factory_mock_guard.factory_mock_,
+                Create(kInstanceIdWithLolaBinding, _, kEventName, kTestSampleTypeSizeInfo))
+        .WillOnce(Return(ByMove(std::move(skeleton_event_binding_mock_ptr))));
+
+    // and that SetReceiveHandlerRegistrationChangedHandler() is called once on the event binding, which stores the
+    // callback
+    std::optional<ReceiveHandlerRegistrationChangedCallback> callback_in_binding{};
+    EXPECT_CALL(skeleton_event_binding_mock, SetReceiveHandlerRegistrationChangedHandler(_))
+        .WillOnce(Invoke([&callback_in_binding](ReceiveHandlerRegistrationChangedCallback callback) noexcept {
+            callback_in_binding.emplace(std::move(callback));
+            return Result<void>{};
+        }));
+
+    // Given a skeleton which has a mock skeleton-binding
+    MyDummySkeleton unit{std::make_unique<mock_binding::Skeleton>(), kInstanceIdWithLolaBinding};
+
+    // When setting a callback on the event
+    std::optional<bool> reported_registration_state{};
+    const auto result = unit.my_dummy_event_.SetReceiveHandlerRegistrationChangedHandler(
+        [&reported_registration_state](const bool registered) noexcept {
+            reported_registration_state = registered;
+        });
+
+    // Then the result is valid
+    ASSERT_TRUE(result.has_value());
+
+    // and when the binding calls the callback it got handed over
+    ASSERT_TRUE(callback_in_binding.has_value());
+    (*callback_in_binding)(true);
+
+    // Then the callback of the user is called with the same argument
+    EXPECT_EQ(reported_registration_state, std::optional<bool>{true});
+}
+
+TEST(SkeletonEventReceiveHandlerRegistrationChangedTest, SetPropagatesErrorFromBinding)
+{
+    RecordProperty("lobster-tracing", "Communication.SkeletonEventClassSetReceiveHandlerRegistrationChangedHandler");
+    RecordProperty("Description",
+                   "Checks that SetReceiveHandlerRegistrationChangedHandler() returns the error of the binding.");
+    RecordProperty("TestType", "Requirements-based test");
+    RecordProperty("DerivationTechnique", "Analysis of requirements");
+
+    RuntimeMockGuard runtime_mock_guard{};
+    ON_CALL(runtime_mock_guard.runtime_mock_, GetTracingFilterConfig()).WillByDefault(Return(nullptr));
+    SkeletonEventBindingFactoryMockGuard skeleton_event_binding_factory_mock_guard{};
+
+    // Expecting that a SkeletonEvent binding is created
+    auto skeleton_event_binding_mock_ptr = std::make_unique<mock_binding::SkeletonEvent>();
+    auto& skeleton_event_binding_mock = *skeleton_event_binding_mock_ptr;
+    EXPECT_CALL(skeleton_event_binding_factory_mock_guard.factory_mock_,
+                Create(kInstanceIdWithLolaBinding, _, kEventName, kTestSampleTypeSizeInfo))
+        .WillOnce(Return(ByMove(std::move(skeleton_event_binding_mock_ptr))));
+
+    // and that SetReceiveHandlerRegistrationChangedHandler() is called once on the event binding which returns an error
+    EXPECT_CALL(skeleton_event_binding_mock, SetReceiveHandlerRegistrationChangedHandler(_))
+        .WillOnce(Return(MakeUnexpected(ComErrc::kBindingFailure)));
+
+    // Given a skeleton which has a mock skeleton-binding
+    MyDummySkeleton unit{std::make_unique<mock_binding::Skeleton>(), kInstanceIdWithLolaBinding};
+
+    // When setting a callback on the event
+    const auto result = unit.my_dummy_event_.SetReceiveHandlerRegistrationChangedHandler([](bool) noexcept {});
+
+    // Then the result contains the error of the binding
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ComErrc::kBindingFailure);
+}
+
+TEST(SkeletonEventReceiveHandlerRegistrationChangedTest, UnsetDispatchesToBinding)
+{
+    RecordProperty("lobster-tracing", "Communication.SkeletonEventClassUnsetReceiveHandlerRegistrationChangedHandler");
+    RecordProperty("Description",
+                   "Checks that UnsetReceiveHandlerRegistrationChangedHandler() dispatches to the binding.");
+    RecordProperty("TestType", "Requirements-based test");
+    RecordProperty("DerivationTechnique", "Analysis of requirements");
+
+    RuntimeMockGuard runtime_mock_guard{};
+    ON_CALL(runtime_mock_guard.runtime_mock_, GetTracingFilterConfig()).WillByDefault(Return(nullptr));
+    SkeletonEventBindingFactoryMockGuard skeleton_event_binding_factory_mock_guard{};
+
+    // Expecting that a SkeletonEvent binding is created
+    auto skeleton_event_binding_mock_ptr = std::make_unique<mock_binding::SkeletonEvent>();
+    auto& skeleton_event_binding_mock = *skeleton_event_binding_mock_ptr;
+    EXPECT_CALL(skeleton_event_binding_factory_mock_guard.factory_mock_,
+                Create(kInstanceIdWithLolaBinding, _, kEventName, kTestSampleTypeSizeInfo))
+        .WillOnce(Return(ByMove(std::move(skeleton_event_binding_mock_ptr))));
+
+    // and that UnsetReceiveHandlerRegistrationChangedHandler() is called once on the event binding
+    EXPECT_CALL(skeleton_event_binding_mock, UnsetReceiveHandlerRegistrationChangedHandler())
+        .WillOnce(Return(Result<void>{}));
+
+    // Given a skeleton which has a mock skeleton-binding
+    MyDummySkeleton unit{std::make_unique<mock_binding::Skeleton>(), kInstanceIdWithLolaBinding};
+
+    // When unsetting the callback on the event
+    const auto result = unit.my_dummy_event_.UnsetReceiveHandlerRegistrationChangedHandler();
+
+    // Then the result is valid
+    EXPECT_TRUE(result.has_value());
+}
+
+TEST(SkeletonEventReceiveHandlerRegistrationChangedTest, UnsetPropagatesErrorFromBinding)
+{
+    RecordProperty("lobster-tracing", "Communication.SkeletonEventClassUnsetReceiveHandlerRegistrationChangedHandler");
+    RecordProperty("Description",
+                   "Checks that UnsetReceiveHandlerRegistrationChangedHandler() returns the error of the binding.");
+    RecordProperty("TestType", "Requirements-based test");
+    RecordProperty("DerivationTechnique", "Analysis of requirements");
+
+    RuntimeMockGuard runtime_mock_guard{};
+    ON_CALL(runtime_mock_guard.runtime_mock_, GetTracingFilterConfig()).WillByDefault(Return(nullptr));
+    SkeletonEventBindingFactoryMockGuard skeleton_event_binding_factory_mock_guard{};
+
+    // Expecting that a SkeletonEvent binding is created
+    auto skeleton_event_binding_mock_ptr = std::make_unique<mock_binding::SkeletonEvent>();
+    auto& skeleton_event_binding_mock = *skeleton_event_binding_mock_ptr;
+    EXPECT_CALL(skeleton_event_binding_factory_mock_guard.factory_mock_,
+                Create(kInstanceIdWithLolaBinding, _, kEventName, kTestSampleTypeSizeInfo))
+        .WillOnce(Return(ByMove(std::move(skeleton_event_binding_mock_ptr))));
+
+    // and that UnsetReceiveHandlerRegistrationChangedHandler() is called once on the event binding which returns an
+    // error
+    EXPECT_CALL(skeleton_event_binding_mock, UnsetReceiveHandlerRegistrationChangedHandler())
+        .WillOnce(Return(MakeUnexpected(ComErrc::kBindingFailure)));
+
+    // Given a skeleton which has a mock skeleton-binding
+    MyDummySkeleton unit{std::make_unique<mock_binding::Skeleton>(), kInstanceIdWithLolaBinding};
+
+    // When unsetting the callback on the event
+    const auto result = unit.my_dummy_event_.UnsetReceiveHandlerRegistrationChangedHandler();
+
+    // Then the result contains the error of the binding
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ComErrc::kBindingFailure);
 }
 
 }  // namespace

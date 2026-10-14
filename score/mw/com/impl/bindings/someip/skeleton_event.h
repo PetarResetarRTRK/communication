@@ -100,6 +100,11 @@ class SkeletonEvent final : public SkeletonEventBinding
 
     void SetSkeletonEventTracingData(impl::tracing::SkeletonEventTracingData tracing_data) noexcept override;
 
+    Result<void> SetReceiveHandlerRegistrationChangedHandler(
+        ReceiveHandlerRegistrationChangedCallback callback) noexcept override;
+
+    Result<void> UnsetReceiveHandlerRegistrationChangedHandler() noexcept override;
+
   private:
     Skeleton& parent_;
     std::string_view event_name_;

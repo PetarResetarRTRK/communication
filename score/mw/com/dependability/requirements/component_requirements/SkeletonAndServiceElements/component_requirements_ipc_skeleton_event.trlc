@@ -113,6 +113,36 @@ section "com" {
                     derived_from = [Communication.FEAT_ZeroCopy@1]
                     version = 1
                 }
+
+                ScoreReq.CompReq SkeletonEventClassSetReceiveHandlerRegistrationChangedHandler {
+                    description = '''The {{SkeletonEvent}} class shall contain a public method:
+
+                    {{{score::Result<void> SkeletonEvent::SetReceiveHandlerRegistrationChangedHandler(ReceiveHandlerRegistrationChangedCallback callback) noexcept}}}
+
+                    Behaviour: It shall allow setting a callback that will be called if the first {{ReceiveHandler}} has been registered or the last {{ReceiveHandler}}
+                    has been withdrawn for this event.
+
+                    Arguments:
+                    * callback: A function with one boolean argument (true = first ReceiveHandler registered, false = last ReceiveHandler withdrawn) and {{void}} as the return type.
+
+                    Return value: {{score::Result<void>}} which contains a {{score::result::Error}} if the binding could not set the callback.'''
+                    safety = ScoreReq.Asil.B
+                    derived_from = [Communication.FEAT_Method@1]
+                    version = 1
+                }
+
+                ScoreReq.CompReq SkeletonEventClassUnsetReceiveHandlerRegistrationChangedHandler {
+                    description = '''The {{SkeletonEvent}} class shall contain a public method:
+
+                    {{{score::Result<void> SkeletonEvent::UnsetReceiveHandlerRegistrationChangedHandler() noexcept}}}
+
+                    Behaviour: It shall allow clearing a previously set callback for ReceiveHandler changes, see [SkeletonEventClassSetReceiveHandlerRegistrationChangedHandler].
+
+                    Return value: {{score::Result<void>}} which contains a {{score::result::Error}} if the binding could not clear the callback.'''
+                    safety = ScoreReq.Asil.B
+                    derived_from = [Communication.FEAT_Method@1]
+                    version = 1
+                }
             }
         }
     }

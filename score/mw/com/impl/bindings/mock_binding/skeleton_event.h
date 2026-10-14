@@ -44,6 +44,11 @@ class SkeletonEvent : public SkeletonEventBinding
     MOCK_METHOD(memory::DataTypeSizeInfo, GetEventDataTypeSizeInfo, (), (const, noexcept, override));
     MOCK_METHOD(BindingType, GetBindingType, (), (const, noexcept, override));
     MOCK_METHOD(void, SetSkeletonEventTracingData, (impl::tracing::SkeletonEventTracingData), (noexcept, override));
+    MOCK_METHOD(Result<void>,
+                SetReceiveHandlerRegistrationChangedHandler,
+                (ReceiveHandlerRegistrationChangedCallback),
+                (noexcept, override));
+    MOCK_METHOD(Result<void>, UnsetReceiveHandlerRegistrationChangedHandler, (), (noexcept, override));
 };
 
 class SkeletonEventFacade : public SkeletonEventBinding
@@ -87,6 +92,15 @@ class SkeletonEventFacade : public SkeletonEventBinding
     void SetSkeletonEventTracingData(impl::tracing::SkeletonEventTracingData tracing_data) noexcept override
     {
         return skeleton_event_.SetSkeletonEventTracingData(tracing_data);
+    }
+    Result<void> SetReceiveHandlerRegistrationChangedHandler(
+        ReceiveHandlerRegistrationChangedCallback callback) noexcept override
+    {
+        return skeleton_event_.SetReceiveHandlerRegistrationChangedHandler(std::move(callback));
+    }
+    Result<void> UnsetReceiveHandlerRegistrationChangedHandler() noexcept override
+    {
+        return skeleton_event_.UnsetReceiveHandlerRegistrationChangedHandler();
     }
 };
 }  // namespace score::mw::com::impl::mock_binding

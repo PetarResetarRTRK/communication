@@ -158,8 +158,8 @@ using GenericSkeletonServiceElementInfo = impl::GenericSkeletonServiceElementInf
 using GenericSkeletonEvent = impl::GenericSkeletonEvent;
 
 /// \api
-/// \brief A callback that can be registered on a GenericSkeletonEvent to be notified about changes in the
-/// availability of receive-handlers for this event.
+/// \brief A callback that can be registered on a SkeletonEvent or a GenericSkeletonEvent to be notified about changes
+/// in the availability of receive-handlers for this event.
 using ReceiveHandlerRegistrationChangedCallback = impl::ReceiveHandlerRegistrationChangedCallback;
 
 }  // namespace score::mw::com

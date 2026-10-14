@@ -98,6 +98,14 @@ class SkeletonEventBinding
 
     /// \todo To be removed in Ticket-134850
     virtual void SetSkeletonEventTracingData(impl::tracing::SkeletonEventTracingData tracing_data) noexcept = 0;
+
+    /// \brief Sets a callback that will be called when the first receive handler of this event will get registered or
+    /// the last receive handler will be removed.
+    virtual Result<void> SetReceiveHandlerRegistrationChangedHandler(
+        ReceiveHandlerRegistrationChangedCallback callback) noexcept = 0;
+
+    /// \brief Unsets the callback, which has been set via SetReceiveHandlerRegistrationChangedHandler().
+    virtual Result<void> UnsetReceiveHandlerRegistrationChangedHandler() noexcept = 0;
 };
 
 }  // namespace score::mw::com::impl

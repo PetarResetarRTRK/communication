@@ -63,9 +63,11 @@ This document contains examples of each mw::com user facing API.
 | **Skeleton Event** |
 | [`SkeletonEvent::Send()`](#example-4-send---send-event-data-to-subscribers) |
 | [`SkeletonEvent::Allocate()`](#example-5-allocate---allocate-memory-for-event-data) |
+| [`SkeletonEvent::SetReceiveHandlerRegistrationChangedHandler()`](#example-6-setreceivehandlerregistrationchangedhandler---track-receive-handler-registrations) |
+| [`SkeletonEvent::UnsetReceiveHandlerRegistrationChangedHandler()`](#example-6-setreceivehandlerregistrationchangedhandler---track-receive-handler-registrations) |
 | **Skeleton Field** |
-| [`SkeletonField::Update()`](#example-6-update---update-field-value-and-notify-subscribers) |
-| [`SkeletonField::Allocate()`](#example-7-allocate---allocate-memory-for-zero-copy-field-update) |
+| [`SkeletonField::Update()`](#example-7-update---update-field-value-and-notify-subscribers) |
+| [`SkeletonField::Allocate()`](#example-8-allocate---allocate-memory-for-zero-copy-field-update) |
 
 ---
 
@@ -1673,7 +1675,55 @@ void SendEventWithZeroCopy() {
 
 ---
 
-#### Example 6: `Update()` - Update Field Value and Notify Subscribers
+#### Example 6: `SetReceiveHandlerRegistrationChangedHandler()` - Track Receive Handler Registrations
+
+`SetReceiveHandlerRegistrationChangedHandler()` registers a callback that is invoked when the first receive handler
+(see `ProxyEvent::SetReceiveHandler()`) has been registered for this event or the last one has been unregistered.
+`UnsetReceiveHandlerRegistrationChangedHandler()` removes the callback again.
+
+<details>
+<summary> Examples: </summary>
+
+```cpp
+#include "generated_service_skeleton.h"
+
+void ProduceOnlyWhileReceiveHandlersExist() {
+    auto skeleton = MyServiceSkeleton::Create(spec.value()).value();
+
+    // Set the callback BEFORE OfferService()
+    auto set_result = skeleton.my_event.SetReceiveHandlerRegistrationChangedHandler(
+        [](bool receive_handler_registered) noexcept {
+            if (receive_handler_registered) {
+                // First receive handler registered - e.g. start producing event data
+            } else {
+                // Last receive handler unregistered - e.g. stop producing event data
+            }
+        });
+    if (!set_result.has_value()) {
+        // The binding of this event doesn't support the callback
+    }
+
+    skeleton.OfferService();
+    // ...
+    skeleton.StopOfferService();
+
+    // Unset the callback only AFTER StopOfferService()
+    skeleton.my_event.UnsetReceiveHandlerRegistrationChangedHandler();
+}
+```
+
+**Key Points**:
+- Set the callback before `OfferService()` and unset it after `StopOfferService()` to avoid races with its invocation
+- The callback is invoked from a middleware thread - keep it short and non-blocking
+- Only receive handlers are tracked: a proxy, which subscribed but polls via `GetNewSamples()` without a receive
+  handler, doesn't trigger the callback
+- Returns `Result<void>` - check with `has_value()`
+
+</details>
+
+---
+
+#### Example 7: `Update()` - Update Field Value and Notify Subscribers
 
 `Update()` sets a new field value and notifies all subscribed proxy clients of the change.
 Supports two overloads: one for direct value update (copy-based) and another for zero-copy using pre-allocated memory.
@@ -1744,7 +1794,7 @@ if (skeleton_result.has_value()) {
 
 ---
 
-#### Example 7: `Allocate()` - Allocate Memory for Zero-Copy Field Update
+#### Example 8: `Allocate()` - Allocate Memory for Zero-Copy Field Update
 
 see [#example-5-allocate---allocate-memory-for-event-data](#example-5-allocate---allocate-memory-for-event-data)
 

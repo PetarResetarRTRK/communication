@@ -122,12 +122,14 @@ DataTypeMetaInfo GenericSkeletonEvent::GetSizeInfo() const noexcept
 Result<void> GenericSkeletonEvent::SetReceiveHandlerRegistrationChangedHandler(
     ReceiveHandlerRegistrationChangedCallback callback) noexcept
 {
-    return GetGenericEventBinding(binding_.get()).SetReceiveHandlerRegistrationChangedHandler(std::move(callback));
+    SCORE_LANGUAGE_FUTURECPP_ASSERT_PRD_MESSAGE(binding_ != nullptr, "Binding is not initialized!");
+    return binding_->SetReceiveHandlerRegistrationChangedHandler(std::move(callback));
 }
 
 Result<void> GenericSkeletonEvent::UnsetReceiveHandlerRegistrationChangedHandler() noexcept
 {
-    return GetGenericEventBinding(binding_.get()).UnsetReceiveHandlerRegistrationChangedHandler();
+    SCORE_LANGUAGE_FUTURECPP_ASSERT_PRD_MESSAGE(binding_ != nullptr, "Binding is not initialized!");
+    return binding_->UnsetReceiveHandlerRegistrationChangedHandler();
 }
 
 }  // namespace score::mw::com::impl

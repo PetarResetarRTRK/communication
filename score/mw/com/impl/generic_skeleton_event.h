@@ -45,9 +45,6 @@ class GenericSkeletonEvent : public SkeletonEventBase
 
     /// \brief Set callback, to get notified, when either the 1st event-notification has been registered or the last
     /// event-notification has been unregistered.
-    /// \detail This extension has been added to GenericSkeletonEvent only (not "typed" SkeletonEvent),
-    /// because we are only using it so far in the gateway use case, where the gateway uses only
-    /// GenericProxy/GenericSkeleton and not typed proxies/skeletons.
     Result<void> SetReceiveHandlerRegistrationChangedHandler(
         ReceiveHandlerRegistrationChangedCallback callback) noexcept;
 

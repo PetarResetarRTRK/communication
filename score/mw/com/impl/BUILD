@@ -197,6 +197,7 @@ cc_library(
     ],
     deps = [
         ":instance_identifier",
+        ":receive_handler_registration_changed_handler",
         ":reference_to_moveable",
         ":runtime",
         ":skeleton_base",
@@ -542,7 +543,6 @@ cc_library(
         "//score/mw/com/impl/tracing:__subpackages__",
     ],
     deps = [
-        ":receive_handler_registration_changed_handler",
         ":skeleton_event_binding",
         "@score_baselibs//score/result",
     ],

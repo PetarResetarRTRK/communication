@@ -13,12 +13,9 @@
 #ifndef SCORE_MW_COM_IMPL_GENERIC_SKELETON_EVENT_BINDING_H
 #define SCORE_MW_COM_IMPL_GENERIC_SKELETON_EVENT_BINDING_H
 
-#include "score/mw/com/impl/receive_handler_registration_changed_handler.h"
 #include "score/mw/com/impl/skeleton_event_binding.h"
 
 #include "score/result/result.h"
-
-#include <score/callback.hpp>
 
 namespace score::mw::com::impl
 {
@@ -47,14 +44,6 @@ class GenericSkeletonEventBinding : public SkeletonEventBinding
     /// \brief Trigger notification of potential registered receive handlers.
     /// \details This is a specific API for the gateway use-case!
     virtual Result<void> Notify() = 0;
-
-    /// \brief Sets a callback that will be called when the first ReceiveHandler of a GenericEvent
-    /// will get registered or the last ReceiveHandler will be removed.
-    /// \details This is a specific API for the gateway use-case!
-    virtual Result<void> SetReceiveHandlerRegistrationChangedHandler(
-        ReceiveHandlerRegistrationChangedCallback callback) noexcept = 0;
-
-    virtual Result<void> UnsetReceiveHandlerRegistrationChangedHandler() noexcept = 0;
 };
 
 }  // namespace score::mw::com::impl

@@ -51,6 +51,15 @@ class MyEvent final : public SkeletonEventBinding
         return BindingType::kFake;
     }
     void SetSkeletonEventTracingData(impl::tracing::SkeletonEventTracingData) noexcept override {}
+    Result<void> SetReceiveHandlerRegistrationChangedHandler(
+        ReceiveHandlerRegistrationChangedCallback) noexcept override
+    {
+        return {};
+    }
+    Result<void> UnsetReceiveHandlerRegistrationChangedHandler() noexcept override
+    {
+        return {};
+    }
     memory::DataTypeSizeInfo GetEventDataTypeSizeInfo() const noexcept override
     {
         return sample_data_type_size_info;

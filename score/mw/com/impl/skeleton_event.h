@@ -18,6 +18,7 @@
 #include "score/mw/com/impl/plumbing/sample_allocatee_ptr.h"
 #include "score/mw/com/impl/plumbing/sample_ptr.h"
 #include "score/mw/com/impl/plumbing/skeleton_event_binding_factory.h"
+#include "score/mw/com/impl/receive_handler_registration_changed_handler.h"
 #include "score/mw/com/impl/skeleton_base.h"
 #include "score/mw/com/impl/skeleton_event_base.h"
 #include "score/mw/com/impl/skeleton_event_binding.h"
@@ -120,6 +121,29 @@ class SkeletonEvent : public SkeletonEventBase
      * \return On success, returns a SampleAllocateePtr that can be filled with data. On failure, returns an error code.
      */
     Result<SampleAllocateePtr<EventType>> Allocate() noexcept;
+
+    /**
+     * \api
+     * \brief Sets a callback, which gets called when either the first receive handler has been registered for this
+     *        event or the last receive handler has been unregistered.
+     * \details The callback's argument is true, when the first receive handler has been registered and false, when
+     *          the last receive handler has been unregistered. The callback is called from a middleware thread.
+     * \attention The callback must be set before OfferService() has been called in order to avoid any race
+     *            conditions between setting the callback and it being called.
+     * \param callback The callback to be called on a change of the receive handler registrations.
+     * \return On failure, returns an error code.
+     */
+    Result<void> SetReceiveHandlerRegistrationChangedHandler(
+        ReceiveHandlerRegistrationChangedCallback callback) noexcept;
+
+    /**
+     * \api
+     * \brief Unsets the callback, which has been set via SetReceiveHandlerRegistrationChangedHandler().
+     * \attention The callback must not be unset before StopOfferService() has been called in order to avoid any race
+     *            conditions between unsetting the callback and it being called.
+     * \return On failure, returns an error code.
+     */
+    Result<void> UnsetReceiveHandlerRegistrationChangedHandler() noexcept;
 
     void InjectMock(ISkeletonEvent<EventType>& skeleton_event_mock)
     {
@@ -280,6 +304,29 @@ Result<SampleAllocateePtr<SampleDataType>> SkeletonEvent<SampleDataType>::Alloca
     // If a slot gets reused later here (because we return in this Allocate() a slot, which had been used before, we
     // return it in a state, where it was left in the last Send()!
     return allocate_result;
+}
+
+template <typename SampleDataType>
+Result<void> SkeletonEvent<SampleDataType>::SetReceiveHandlerRegistrationChangedHandler(
+    ReceiveHandlerRegistrationChangedCallback callback) noexcept
+{
+    if (skeleton_event_mock_ != nullptr)
+    {
+        return skeleton_event_mock_->SetReceiveHandlerRegistrationChangedHandler(std::move(callback));
+    }
+
+    return binding_->SetReceiveHandlerRegistrationChangedHandler(std::move(callback));
+}
+
+template <typename SampleDataType>
+Result<void> SkeletonEvent<SampleDataType>::UnsetReceiveHandlerRegistrationChangedHandler() noexcept
+{
+    if (skeleton_event_mock_ != nullptr)
+    {
+        return skeleton_event_mock_->UnsetReceiveHandlerRegistrationChangedHandler();
+    }
+
+    return binding_->UnsetReceiveHandlerRegistrationChangedHandler();
 }
 
 template <typename SampleType>

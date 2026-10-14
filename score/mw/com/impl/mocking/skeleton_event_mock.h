@@ -27,6 +27,11 @@ class SkeletonEventMock : public ISkeletonEvent<SampleType>
     MOCK_METHOD(Result<void>, Send, (const SampleType&), (override));
     MOCK_METHOD(Result<void>, Send, (SampleAllocateePtr<SampleType>), (override));
     MOCK_METHOD(Result<SampleAllocateePtr<SampleType>>, Allocate, (), (override));
+    MOCK_METHOD(Result<void>,
+                SetReceiveHandlerRegistrationChangedHandler,
+                (ReceiveHandlerRegistrationChangedCallback),
+                (override));
+    MOCK_METHOD(Result<void>, UnsetReceiveHandlerRegistrationChangedHandler, (), (override));
 };
 
 }  // namespace score::mw::com::impl

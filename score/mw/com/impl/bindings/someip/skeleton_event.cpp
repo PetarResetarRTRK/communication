@@ -110,4 +110,17 @@ void SkeletonEvent::SetSkeletonEventTracingData(impl::tracing::SkeletonEventTrac
     tracing_data_ = tracing_data;
 }
 
+Result<void> SkeletonEvent::SetReceiveHandlerRegistrationChangedHandler(
+    ReceiveHandlerRegistrationChangedCallback callback) noexcept
+{
+    receive_handler_registration_changed_callback_ = std::move(callback);
+    return {};
+}
+
+Result<void> SkeletonEvent::UnsetReceiveHandlerRegistrationChangedHandler() noexcept
+{
+    receive_handler_registration_changed_callback_.reset();
+    return {};
+}
+
 }  // namespace score::mw::com::impl::someip

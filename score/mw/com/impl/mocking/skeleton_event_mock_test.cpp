@@ -148,5 +148,69 @@ TEST_F(SkeletonEventMockFixture, ZeroCopySendReturnsErrorWhenMockReturnsError)
     EXPECT_EQ(result.error(), error_code);
 }
 
+TEST_F(SkeletonEventMockFixture, SetReceiveHandlerRegistrationChangedHandlerDispatchesToMockAfterInjectingMock)
+{
+    // Given a SkeletonEvent constructed with an empty binding and an injected mock
+
+    // Expecting that SetReceiveHandlerRegistrationChangedHandler will be called on the mock which returns a valid
+    // result
+    EXPECT_CALL(skeleton_event_mock_, SetReceiveHandlerRegistrationChangedHandler(_)).WillOnce(Return(Result<void>{}));
+
+    // When SetReceiveHandlerRegistrationChangedHandler is called on the SkeletonEvent
+    auto result = unit_.SetReceiveHandlerRegistrationChangedHandler([](bool) noexcept {});
+
+    // Then the result is valid
+    ASSERT_TRUE(result.has_value());
+}
+
+TEST_F(SkeletonEventMockFixture, SetReceiveHandlerRegistrationChangedHandlerReturnsErrorWhenMockReturnsError)
+{
+    // Given a SkeletonEvent constructed with an empty binding and an injected mock
+
+    // Expecting that SetReceiveHandlerRegistrationChangedHandler will be called on the mock which returns an error
+    const auto error_code = ComErrc::kBindingFailure;
+    EXPECT_CALL(skeleton_event_mock_, SetReceiveHandlerRegistrationChangedHandler(_))
+        .WillOnce(Return(MakeUnexpected(error_code)));
+
+    // When SetReceiveHandlerRegistrationChangedHandler is called on the SkeletonEvent
+    auto result = unit_.SetReceiveHandlerRegistrationChangedHandler([](bool) noexcept {});
+
+    // Then the result contains the same error code that was returned by the mock
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), error_code);
+}
+
+TEST_F(SkeletonEventMockFixture, UnsetReceiveHandlerRegistrationChangedHandlerDispatchesToMockAfterInjectingMock)
+{
+    // Given a SkeletonEvent constructed with an empty binding and an injected mock
+
+    // Expecting that UnsetReceiveHandlerRegistrationChangedHandler will be called on the mock which returns a valid
+    // result
+    EXPECT_CALL(skeleton_event_mock_, UnsetReceiveHandlerRegistrationChangedHandler()).WillOnce(Return(Result<void>{}));
+
+    // When UnsetReceiveHandlerRegistrationChangedHandler is called on the SkeletonEvent
+    auto result = unit_.UnsetReceiveHandlerRegistrationChangedHandler();
+
+    // Then the result is valid
+    ASSERT_TRUE(result.has_value());
+}
+
+TEST_F(SkeletonEventMockFixture, UnsetReceiveHandlerRegistrationChangedHandlerReturnsErrorWhenMockReturnsError)
+{
+    // Given a SkeletonEvent constructed with an empty binding and an injected mock
+
+    // Expecting that UnsetReceiveHandlerRegistrationChangedHandler will be called on the mock which returns an error
+    const auto error_code = ComErrc::kBindingFailure;
+    EXPECT_CALL(skeleton_event_mock_, UnsetReceiveHandlerRegistrationChangedHandler())
+        .WillOnce(Return(MakeUnexpected(error_code)));
+
+    // When UnsetReceiveHandlerRegistrationChangedHandler is called on the SkeletonEvent
+    auto result = unit_.UnsetReceiveHandlerRegistrationChangedHandler();
+
+    // Then the result contains the same error code that was returned by the mock
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), error_code);
+}
+
 }  // namespace
 }  // namespace score::mw::com::impl

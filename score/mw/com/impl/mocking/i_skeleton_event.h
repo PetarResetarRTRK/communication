@@ -14,6 +14,7 @@
 #define SCORE_MW_COM_IMPL_MOCKING_I_SKELETON_EVENT_H
 
 #include "score/mw/com/impl/plumbing/sample_allocatee_ptr.h"
+#include "score/mw/com/impl/receive_handler_registration_changed_handler.h"
 
 #include "score/result/result.h"
 
@@ -32,6 +33,8 @@ class ISkeletonEvent
     virtual Result<void> Send(const SampleType&) = 0;
     virtual Result<void> Send(SampleAllocateePtr<SampleType>) = 0;
     virtual Result<SampleAllocateePtr<SampleType>> Allocate() = 0;
+    virtual Result<void> SetReceiveHandlerRegistrationChangedHandler(ReceiveHandlerRegistrationChangedCallback) = 0;
+    virtual Result<void> UnsetReceiveHandlerRegistrationChangedHandler() = 0;
 
   protected:
     ISkeletonEvent(const ISkeletonEvent&) = default;
