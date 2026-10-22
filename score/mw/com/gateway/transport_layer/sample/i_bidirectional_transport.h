@@ -28,6 +28,9 @@ class IBidirectionalTransport
 {
   public:
     using MessageHandler = score::cpp::callback<void(std::unique_ptr<TransportMessage>), 64>;
+    /// \brief Callback, which is informed about a change of the connection state: true, when the connection has been
+    ///        (re-)established, false, when it has been lost.
+    using ConnectionStateHandler = score::cpp::callback<void(bool), 64>;
 
     virtual ~IBidirectionalTransport() = default;
 
@@ -40,6 +43,10 @@ class IBidirectionalTransport
     virtual score::Result<void> SendNotification(TransportMessage& message) = 0;
 
     virtual void SetMessageHandler(MessageHandler handler) = 0;
+    /// \brief Sets a callback, which is called on each change of the connection state. It is called in order with and
+    ///        in the same context as the message handler, so that it is serialized with the handling of the messages.
+    ///        Has to be set before Setup(). If not set, connection state changes are not reported.
+    virtual void SetConnectionStateHandler(ConnectionStateHandler handler) = 0;
 };
 
 }  // namespace score::mw::com::gateway

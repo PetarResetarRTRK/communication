@@ -911,7 +911,7 @@ TEST_F(GatewayApplicationFlowTest, ServiceReFoundRePropagates)
     FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
 }
 
-TEST_F(GatewayApplicationFlowTest, PropagateServiceFailureErasesProxy)
+TEST_F(GatewayApplicationFlowTest, PropagateServiceFailureKeepsProxyAndRetriesOnRediscovery)
 {
     // Given discovery started and the transport rejects ProvideService
     StartAndCaptureFindHandler();
@@ -919,10 +919,64 @@ TEST_F(GatewayApplicationFlowTest, PropagateServiceFailureErasesProxy)
         .WillOnce(::testing::Return(score::MakeUnexpected(GatewayErrorc::kSkeletonCreationFailed)))
         .WillOnce(::testing::Return(score::Result<void>{}));
 
-    // When the service is found (ProvideService fails so proxy is erased) and then found again
-    // Then a brand new proxy is created and ProvideService retried.
+    // Expecting that the proxy is kept, i.e. only created once
+    EXPECT_CALL(proxy_binding_factory_mock_guard_.factory_mock_, Create(::testing::_));
+
+    // When the service is found (ProvideService fails, proxy is kept) and then found again
+    // Then ProvideService is retried.
     FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
     FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
+}
+
+TEST_F(GatewayApplicationFlowTest, PropagateServiceFailureIsRetriedOnRemoteGatewayConnected)
+{
+    // Given discovery started and the transport rejects the first ProvideService (e.g. connection lost)
+    StartAndCaptureFindHandler();
+    EXPECT_CALL(*transport_mock_, ProvideService(::testing::_, ::testing::_))
+        .WillOnce(::testing::Return(score::MakeUnexpected(GatewayErrorc::kSkeletonCreationFailed)))
+        .WillOnce(::testing::Return(score::Result<void>{}));
+    FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
+
+    // When the remote gateway (re-)connects
+    // Then ProvideService is retried.
+    app_->OnRemoteGatewayConnected();
+}
+
+TEST_F(GatewayApplicationFlowTest, RemoteGatewayConnectedRePropagatesAvailableService)
+{
+    // Given a service was found and successfully propagated
+    StartAndCaptureFindHandler();
+    FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
+
+    // When the remote gateway (re-)connects, e.g. after a restart
+    // Then the service is propagated again.
+    EXPECT_CALL(*transport_mock_, ProvideService(::testing::_, ::testing::_))
+        .WillOnce(::testing::Return(score::Result<void>{}));
+    app_->OnRemoteGatewayConnected();
+}
+
+TEST_F(GatewayApplicationFlowTest, RemoteGatewayConnectedDoesNotPropagateDisappearedService)
+{
+    // Given a service was found and then disappeared (proxy kept alive)
+    StartAndCaptureFindHandler();
+    FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
+    FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{});
+
+    // When the remote gateway (re-)connects
+    // Then the disappeared service is not propagated.
+    EXPECT_CALL(*transport_mock_, ProvideService(::testing::_, ::testing::_)).Times(0);
+    app_->OnRemoteGatewayConnected();
+}
+
+TEST_F(GatewayApplicationFlowTest, RemoteGatewayConnectedWithoutServicesDoesNothing)
+{
+    // Given no service has been found yet
+    StartAndCaptureFindHandler();
+
+    // When the remote gateway connects
+    // Then nothing is propagated.
+    EXPECT_CALL(*transport_mock_, ProvideService(::testing::_, ::testing::_)).Times(0);
+    app_->OnRemoteGatewayConnected();
 }
 
 TEST_F(GatewayApplicationFlowTest, PropagateServiceInvalidSpecifierKeyReturnsEarly)
@@ -1135,6 +1189,39 @@ TEST_F(GatewayApplicationFlowTest, StopOfferServiceWithExistingSkeletonStopsOffe
     // When StopOfferService is called
     // Then it does not crash and keeps the skeleton for reuse.
     EXPECT_NO_FATAL_FAILURE(app_->StopOfferService(MakeSpecifier("svc/a")));
+}
+
+TEST_F(GatewayApplicationFlowTest, RemoteGatewayDisconnectedStopOffersForwardingSkeletons)
+{
+    // Given a service, which has been provided via the remote gateway (skeleton exists and is offered)
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+    ASSERT_NE(skeleton_binding_mock_, nullptr);
+
+    // Expecting that the skeleton is stop-offered
+    EXPECT_CALL(*skeleton_binding_mock_, PrepareStopOffer(::testing::_));
+
+    // When the connection to the remote gateway is lost
+    app_->OnRemoteGatewayDisconnected();
+
+    // Verify now, since the destruction of the application would stop-offer the skeleton as well.
+    ::testing::Mock::VerifyAndClearExpectations(skeleton_binding_mock_);
+}
+
+TEST_F(GatewayApplicationFlowTest, ForwardingSkeletonIsOfferedAgainWhenProvidedAgainAfterDisconnect)
+{
+    // Given a service, which has been provided via the remote gateway and stop-offered, since the connection got lost
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+    app_->OnRemoteGatewayDisconnected();
+
+    // Expecting that the kept skeleton is offered again, without creating a new one
+    EXPECT_CALL(skeleton_binding_factory_mock_guard_.factory_mock_, Create(::testing::_)).Times(0);
+    EXPECT_CALL(service_discovery_mock_, OfferService(::testing::_)).WillOnce(::testing::Return(score::Result<void>{}));
+
+    // When the remote gateway provides the service again after reconnecting
+    const auto result = app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"}));
+
+    // Then it succeeds
+    EXPECT_TRUE(result.has_value());
 }
 
 TEST_F(GatewayApplicationFlowTest, NotifyUpdateWithExistingSkeletonNotifiesEvent)

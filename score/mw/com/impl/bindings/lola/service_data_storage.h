@@ -31,6 +31,7 @@
 
 #include <score/span.hpp>
 
+#include <array>
 #include <cstddef>
 #include <optional>
 
@@ -60,11 +61,14 @@ class ServiceDataStorage
     ServiceDataStorage(const std::size_t number_of_events_and_fields, memory::shared::ManagedMemoryResource& resource)
         : events_(number_of_events_and_fields, resource),
           events_metainfo_(number_of_events_and_fields, resource),
-          skeleton_pid_{impl::GetBindingRuntime<lola::IRuntime>(BindingType::kLoLa).GetPid()},
-          skeleton_uid_{os::Unistd::instance().getuid()},
+          skeleton_pids_{},
+          skeleton_uids_{},
           allocator_{resource},
           resource_proxy_{*resource.getMemoryResourceProxy()}
     {
+        const auto& lola_runtime = impl::GetBindingRuntime<lola::IRuntime>(BindingType::kLoLa);
+        UpdateSkeletonPid(lola_runtime.GetVmIndex(), lola_runtime.GetPid());
+        UpdateSkeletonUid(lola_runtime.GetVmIndex(), os::Unistd::instance().getuid());
     }
 
     /// \brief Constructs a new (type-erased) EventDataStorage for the given service-element (event/field) on the
@@ -97,26 +101,31 @@ class ServiceDataStorage
     /// \return A reference to the registered EventMetaInfo.
     const EventMetaInfo& GetEventMetaInfo(const ElementFqId element_fq_id) const;
 
-    /// \brief Returns the pid of the skeleton-process that owns this ServiceDataStorage.
-    pid_t GetSkeletonPid() const;
+    /// \brief Returns the pid of the skeleton-process on the given VM, that owns this ServiceDataStorage.
+    /// \details The ServiceDataStorage of a service instance with interVmSupport is shared between VMs, on each of
+    ///          which a skeleton (the actual provider or the forwarding skeleton of a gateway) owns it. pids and uids
+    ///          are only meaningful within a VM, so they are stored per VM (see
+    ///          InterVmSharedMemoryConfiguration::vm_index).
+    pid_t GetSkeletonPid(const InterVmSharedMemoryConfiguration::VmIndex vm_index) const;
 
-    /// \brief Updates the pid of the skeleton-process that owns this ServiceDataStorage.
+    /// \brief Updates the pid of the skeleton-process on the given VM, that owns this ServiceDataStorage.
     /// \details Used after a (partial-)restart, where the skeleton-process got a new pid, which has to be updated
     ///          in the re-opened/shared ServiceDataStorage (see
-    ///          SkeletonMemoryManager::GetServiceDataStorageSkeletonSide()).
-    void UpdateSkeletonPid(const pid_t pid);
+    ///          SkeletonMemoryManager::GetServiceDataStorageSkeletonSide()), or when a gateway's forwarding skeleton
+    ///          opens the ServiceDataStorage created on another VM.
+    void UpdateSkeletonPid(const InterVmSharedMemoryConfiguration::VmIndex vm_index, const pid_t pid);
 
-    /// \brief Returns the uid of the skeleton-process that owns this ServiceDataStorage.
-    uid_t GetSkeletonUid() const;
+    /// \brief Returns the uid of the skeleton-process on the given VM, that owns this ServiceDataStorage.
+    uid_t GetSkeletonUid(const InterVmSharedMemoryConfiguration::VmIndex vm_index) const;
 
-    /// \brief Updates the uid of the skeleton-process that owns this ServiceDataStorage.
-    void UpdateSkeletonUid(const uid_t uid);
+    /// \brief Updates the uid of the skeleton-process on the given VM, that owns this ServiceDataStorage.
+    void UpdateSkeletonUid(const InterVmSharedMemoryConfiguration::VmIndex vm_index, const uid_t uid);
 
   private:
     EventDataStorageMap events_;
     EventMetaInfoMap events_metainfo_;
-    pid_t skeleton_pid_;
-    uid_t skeleton_uid_;
+    std::array<pid_t, InterVmSharedMemoryConfiguration::kMaxNumberOfVms> skeleton_pids_;
+    std::array<uid_t, InterVmSharedMemoryConfiguration::kMaxNumberOfVms> skeleton_uids_;
 
     memory::shared::PolymorphicOffsetPtrAllocator<EventDataStorage> allocator_;
     const memory::shared::MemoryResourceProxy& resource_proxy_;

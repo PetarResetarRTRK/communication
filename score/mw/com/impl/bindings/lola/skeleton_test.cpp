@@ -53,6 +53,10 @@ std::optional<SkeletonBinding::RegisterShmObjectTraceCallback> kEmptyRegisterShm
 void* const kDummyShmObjectBaseAddress = reinterpret_cast<void*>(static_cast<uintptr_t>(1000));
 const memory::shared::ISharedMemoryResource::FileDescriptor kDummyShmObjectFileDescriptor{55};
 
+const auto kInterVmControlChannelPathQm{"/intervm-shared-shmem/lola-ctl-0000000000000001-00016"};
+const auto kInterVmControlChannelPathAsilB{"/intervm-shared-shmem/lola-ctl-0000000000000001-00016-b"};
+const auto kInterVmDataChannelPath{"/intervm-shared-shmem/lola-data-0000000000000001-00016"};
+
 /// \brief Test fixture which mocks the SharedMemoryFactory, allowing us to return a mocked SharedMemoryResource.
 /// \details Tests which check the creation of the shared memory can use SharedMemoryResourceMocks. Tests which check
 /// the allocated memory can use SharedMemoryResourceHeapAllocatorMock to allow checking the memory without using actual
@@ -488,7 +492,35 @@ TEST_F(SkeletonPrepareOfferFixture, PrepareOfferWillUpdateThePidInTheDataSegment
     EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
 
     // and the ServiceDataStorage contains the PID returned by the lola runtime
-    EXPECT_EQ(existing_service_data_storage_.GetSkeletonPid(), pid);
+    EXPECT_EQ(existing_service_data_storage_.GetSkeletonPid(InterVmSharedMemoryConfiguration::VmIndex{0U}), pid);
+}
+
+TEST_F(SkeletonPrepareOfferFixture, PrepareOfferWillUpdatePidAndUidOfItsVmOnlyWhenOpeningSharedMemory)
+{
+    const pid_t pid{7654};
+    const uid_t uid{4321};
+    constexpr InterVmSharedMemoryConfiguration::VmIndex kFirstVmIndex{0U};
+    constexpr InterVmSharedMemoryConfiguration::VmIndex kSecondVmIndex{1U};
+
+    // Given a Skeleton constructed from a valid identifier referencing a QM deployment
+    InitialiseSkeleton(GetValidInstanceIdentifier()).WithAlreadyConnectedProxy();
+    const auto first_vm_pid = existing_service_data_storage_.GetSkeletonPid(kFirstVmIndex);
+    const auto first_vm_uid = existing_service_data_storage_.GetSkeletonUid(kFirstVmIndex);
+
+    // and that the process runs on the second VM sharing the shared memory, e.g. a gateway's forwarding skeleton
+    ON_CALL(lola_runtime_mock_, GetVmIndex()).WillByDefault(Return(kSecondVmIndex));
+    EXPECT_CALL(lola_runtime_mock_, GetPid()).WillOnce(Return(pid));
+    EXPECT_CALL(*unistd_mock_, getuid()).WillRepeatedly(Return(uid));
+
+    // Then PrepareOffer will succeed
+    EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
+
+    // and the ServiceDataStorage contains the PID and UID of this process for the second VM
+    EXPECT_EQ(existing_service_data_storage_.GetSkeletonPid(kSecondVmIndex), pid);
+    EXPECT_EQ(existing_service_data_storage_.GetSkeletonUid(kSecondVmIndex), uid);
+    // and still the ones of the first VM
+    EXPECT_EQ(existing_service_data_storage_.GetSkeletonPid(kFirstVmIndex), first_vm_pid);
+    EXPECT_EQ(existing_service_data_storage_.GetSkeletonUid(kFirstVmIndex), first_vm_uid);
 }
 
 TEST_F(SkeletonPrepareOfferFixture, PrepareOfferWillCallRegisterShmObjectTraceCallbackWhenOpeningSharedMemory)
@@ -563,6 +595,175 @@ TEST_F(SkeletonPrepareOfferFixture, PrepareOfferFailsForGatewayForwardedServiceW
 
     EXPECT_FALSE(
         skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
+}
+
+TEST_F(SkeletonPrepareOfferFixture, PrepareOfferCreatesInterVmSharedMemoryIfNoneExistsForInterVmSupportedService)
+{
+    // Given an ASIL-B skeleton deployment with inter-VM support, which is not gateway-forwarded
+    auto service_instance_deployment = test::kValidMinimalAsilInstanceDeployment;
+    auto* const lola_service_instance_deployment =
+        std::get_if<LolaServiceInstanceDeployment>(&service_instance_deployment.bindingInfo_);
+    ASSERT_NE(lola_service_instance_deployment, nullptr);
+    lola_service_instance_deployment->inter_vm_support_ = true;
+
+    // and a Skeleton using the real ShmPathBuilder
+    const auto instance_identifier =
+        make_InstanceIdentifier(service_instance_deployment, test::kValidMinimalTypeDeployment);
+    InitialiseSkeletonWithRealPathBuilders(instance_identifier).WithNoConnectedProxy();
+
+    // and that there is no existing inter-VM control section to reuse
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathQm, true, _)).WillOnce(Return(nullptr));
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(_)).Times(0);
+
+    // Expecting that stale artefacts are removed and the control and data sections are created with inter-VM paths
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(kInterVmControlChannelPathQm));
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(kInterVmControlChannelPathAsilB));
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(kInterVmDataChannelPath));
+    EXPECT_CALL(shared_memory_factory_mock_, Create(kInterVmControlChannelPathQm, _, _, _, false))
+        .WillOnce(
+            WithArg<1>([this](auto initialize_callback) -> std::shared_ptr<memory::shared::ISharedMemoryResource> {
+                std::invoke(initialize_callback, control_qm_shared_memory_resource_mock_);
+                return control_qm_shared_memory_resource_mock_;
+            }));
+    EXPECT_CALL(shared_memory_factory_mock_, Create(kInterVmControlChannelPathAsilB, _, _, _, false))
+        .WillOnce(
+            WithArg<1>([this](auto initialize_callback) -> std::shared_ptr<memory::shared::ISharedMemoryResource> {
+                std::invoke(initialize_callback, control_asil_b_shared_memory_resource_mock_);
+                return control_asil_b_shared_memory_resource_mock_;
+            }));
+    EXPECT_CALL(shared_memory_factory_mock_, Create(kInterVmDataChannelPath, _, _, _, _))
+        .WillOnce(
+            WithArg<1>([this](auto initialize_callback) -> std::shared_ptr<memory::shared::ISharedMemoryResource> {
+                std::invoke(initialize_callback, data_shared_memory_resource_mock_);
+                return data_shared_memory_resource_mock_;
+            }));
+
+    // and that nothing is created with the standard shm paths
+    EXPECT_CALL(shared_memory_factory_mock_, Create(test::kControlChannelPathQm, _, _, _, _)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Create(test::kControlChannelPathAsilB, _, _, _, _)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Create(test::kDataChannelPath, _, _, _, _)).Times(0);
+
+    // When calling PrepareOffer
+    // Then it succeeds
+    EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
+}
+
+TEST_F(SkeletonPrepareOfferFixture, PrepareOfferOpensInterVmSharedMemoryForGatewayForwardedService)
+{
+    // Given a gateway-forwarded ASIL-B skeleton deployment (inter_vm_support_ and inter_vm_forwarded_ set)
+    auto service_instance_deployment = test::kValidMinimalAsilInstanceDeployment;
+    auto* const lola_service_instance_deployment =
+        std::get_if<LolaServiceInstanceDeployment>(&service_instance_deployment.bindingInfo_);
+    ASSERT_NE(lola_service_instance_deployment, nullptr);
+    lola_service_instance_deployment->inter_vm_support_ = true;
+    lola_service_instance_deployment->inter_vm_forwarded_ = true;
+
+    // and a Skeleton using the real ShmPathBuilder
+    const auto instance_identifier =
+        make_InstanceIdentifier(service_instance_deployment, test::kValidMinimalTypeDeployment);
+    InitialiseSkeletonWithRealPathBuilders(instance_identifier).WithNoConnectedProxy();
+
+    // Expecting that no shared memory is removed or created
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(_)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Create(_, _, _, _, _)).Times(0);
+
+    // and that the existing control and data sections are opened with inter-VM paths
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathQm, true, _))
+        .WillOnce(Return(control_qm_shared_memory_resource_mock_));
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathAsilB, true, _))
+        .WillOnce(Return(control_asil_b_shared_memory_resource_mock_));
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmDataChannelPath, true, _))
+        .WillOnce(Return(data_shared_memory_resource_mock_));
+
+    // When calling PrepareOffer
+    // Then it succeeds
+    EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
+}
+
+TEST_F(SkeletonPrepareOfferFixture, PrepareOfferReusesExistingInterVmSharedMemoryForInterVmSupportedService)
+{
+    // Given an ASIL-B skeleton deployment with inter-VM support, which is not gateway-forwarded
+    auto service_instance_deployment = test::kValidMinimalAsilInstanceDeployment;
+    auto* const lola_service_instance_deployment =
+        std::get_if<LolaServiceInstanceDeployment>(&service_instance_deployment.bindingInfo_);
+    ASSERT_NE(lola_service_instance_deployment, nullptr);
+    lola_service_instance_deployment->inter_vm_support_ = true;
+
+    // and a Skeleton using the real ShmPathBuilder, for which no proxy on this VM holds the usage marker file
+    const auto instance_identifier =
+        make_InstanceIdentifier(service_instance_deployment, test::kValidMinimalTypeDeployment);
+    InitialiseSkeletonWithRealPathBuilders(instance_identifier).WithNoConnectedProxy();
+
+    // Expecting that the existing inter-VM control and data sections are opened
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathQm, true, _))
+        .WillOnce(Return(control_qm_shared_memory_resource_mock_));
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathAsilB, true, _))
+        .WillOnce(Return(control_asil_b_shared_memory_resource_mock_));
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmDataChannelPath, true, _))
+        .WillOnce(Return(data_shared_memory_resource_mock_));
+
+    // and that nothing is removed or created, since proxies on another VM might still use the existing sections
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(_)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(_)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Create(_, _, _, _, _)).Times(0);
+
+    // When calling PrepareOffer
+    // Then it succeeds
+    EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
+}
+
+TEST_F(SkeletonPrepareOfferFixture, PrepareOfferRecreatesIncompleteInterVmSharedMemoryForInterVmSupportedService)
+{
+    // Given an ASIL-B skeleton deployment with inter-VM support, which is not gateway-forwarded
+    auto service_instance_deployment = test::kValidMinimalAsilInstanceDeployment;
+    auto* const lola_service_instance_deployment =
+        std::get_if<LolaServiceInstanceDeployment>(&service_instance_deployment.bindingInfo_);
+    ASSERT_NE(lola_service_instance_deployment, nullptr);
+    lola_service_instance_deployment->inter_vm_support_ = true;
+
+    // and a Skeleton using the real ShmPathBuilder
+    const auto instance_identifier =
+        make_InstanceIdentifier(service_instance_deployment, test::kValidMinimalTypeDeployment);
+    InitialiseSkeletonWithRealPathBuilders(instance_identifier).WithNoConnectedProxy();
+
+    // and that only the inter-VM control sections exist, but not the data section
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathQm, true, _))
+        .WillOnce(Return(control_qm_shared_memory_resource_mock_));
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmControlChannelPathAsilB, true, _))
+        .WillOnce(Return(control_asil_b_shared_memory_resource_mock_));
+    EXPECT_CALL(shared_memory_factory_mock_, Open(kInterVmDataChannelPath, true, _)).WillOnce(Return(nullptr));
+
+    // Expecting that the opened control sections are removed again
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(kInterVmControlChannelPathQm));
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(kInterVmControlChannelPathAsilB));
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(kInterVmDataChannelPath)).Times(0);
+
+    // and that the whole region is created from scratch
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(kInterVmControlChannelPathQm));
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(kInterVmControlChannelPathAsilB));
+    EXPECT_CALL(shared_memory_factory_mock_, RemoveStaleArtefacts(kInterVmDataChannelPath));
+    EXPECT_CALL(shared_memory_factory_mock_, Create(kInterVmControlChannelPathQm, _, _, _, false))
+        .WillOnce(
+            WithArg<1>([this](auto initialize_callback) -> std::shared_ptr<memory::shared::ISharedMemoryResource> {
+                std::invoke(initialize_callback, control_qm_shared_memory_resource_mock_);
+                return control_qm_shared_memory_resource_mock_;
+            }));
+    EXPECT_CALL(shared_memory_factory_mock_, Create(kInterVmControlChannelPathAsilB, _, _, _, false))
+        .WillOnce(
+            WithArg<1>([this](auto initialize_callback) -> std::shared_ptr<memory::shared::ISharedMemoryResource> {
+                std::invoke(initialize_callback, control_asil_b_shared_memory_resource_mock_);
+                return control_asil_b_shared_memory_resource_mock_;
+            }));
+    EXPECT_CALL(shared_memory_factory_mock_, Create(kInterVmDataChannelPath, _, _, _, _))
+        .WillOnce(
+            WithArg<1>([this](auto initialize_callback) -> std::shared_ptr<memory::shared::ISharedMemoryResource> {
+                std::invoke(initialize_callback, data_shared_memory_resource_mock_);
+                return data_shared_memory_resource_mock_;
+            }));
+
+    // When calling PrepareOffer
+    // Then it succeeds
+    EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
 }
 
 using SkeletonPrepareOfferDeathTest = SkeletonPrepareOfferFixture;
@@ -844,6 +1045,52 @@ TEST_F(SkeletonPrepareStopOfferFixture, PrepareStopOfferForGatewayForwardedServi
 
     EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
 
+    EXPECT_FALSE(was_usage_marker_file_closed);
+    skeleton_->PrepareStopOffer({});
+    EXPECT_TRUE(was_usage_marker_file_closed);
+}
+
+TEST_F(SkeletonPrepareStopOfferFixture, PrepareStopOfferForInterVmSupportedServiceRemovesOnlyUsageMarkerFile)
+{
+    bool was_usage_marker_file_closed{false};
+
+    // Given an ASIL-B skeleton deployment with inter-VM support, which is not gateway-forwarded
+    auto service_instance_deployment = test::kValidMinimalAsilInstanceDeployment;
+    auto* const lola_service_instance_deployment =
+        std::get_if<LolaServiceInstanceDeployment>(&service_instance_deployment.bindingInfo_);
+    ASSERT_NE(lola_service_instance_deployment, nullptr);
+    lola_service_instance_deployment->inter_vm_support_ = true;
+
+    const auto instance_identifier =
+        make_InstanceIdentifier(service_instance_deployment, test::kValidMinimalTypeDeployment);
+    InitialiseSkeleton(instance_identifier);
+
+    // and that flocking the service instance usage marker file succeeds in PrepareOffer and in PrepareStopOffer, i.e.
+    // there are no proxies on this VM
+    EXPECT_CALL(*fcntl_mock_, flock(test::kServiceInstanceUsageFileDescriptor, kNonBlockingExclusiveLockOperation))
+        .Times(2)
+        .WillRepeatedly(Return(score::cpp::blank{}));
+    EXPECT_CALL(*fcntl_mock_, flock(test::kServiceInstanceUsageFileDescriptor, kUnlockOperation))
+        .Times(2)
+        .WillRepeatedly(Return(score::cpp::blank{}));
+
+    // Then the shared memory will not be removed in PrepareStopOffer, since proxies on another VM might still use it
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(test::kControlChannelPathQm)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(test::kControlChannelPathAsilB)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_, Remove(test::kDataChannelPath)).Times(0);
+
+    // but the service usage marker file will be closed in PrepareStopOffer
+    EXPECT_CALL(*unistd_mock_, close(test::kServiceInstanceUsageFileDescriptor))
+        .WillOnce(InvokeWithoutArgs(
+            [&was_usage_marker_file_closed]() mutable noexcept -> score::cpp::expected_blank<score::os::Error> {
+                was_usage_marker_file_closed = true;
+                return {};
+            }));
+
+    // When PrepareOffer succeeds
+    EXPECT_TRUE(skeleton_->PrepareOffer(events_, fields_, std::move(kEmptyRegisterShmObjectTraceCallback)).has_value());
+
+    // and PrepareStopOffer is called
     EXPECT_FALSE(was_usage_marker_file_closed);
     skeleton_->PrepareStopOffer({});
     EXPECT_TRUE(was_usage_marker_file_closed);

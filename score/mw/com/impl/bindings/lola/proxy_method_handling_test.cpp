@@ -86,6 +86,9 @@ const filesystem::Path kShmPathPrefix{"/dev/shm"};
 
 constexpr auto kMethodChannelPrefix{"/lola-methods-0000000000000002-00003-06543-"};
 const auto kMethodShmChannelPrefix{kShmPathPrefix / filesystem::Path(kMethodChannelPrefix).RelativePath()};
+constexpr auto kInterVmMethodChannelPrefix{"/intervm-shared-shmem/lola-methods-0000000000000002-00003-06543-"};
+const auto kInterVmMethodShmChannelPrefix{kShmPathPrefix /
+                                          filesystem::Path(kInterVmMethodChannelPrefix).RelativePath()};
 
 const std::string kDummyMethodName0{"my_dummy_method_0"};
 const std::string kDummyMethodName1{"my_dummy_method_1"};
@@ -353,6 +356,44 @@ TEST_F(ProxyMethodHandlingFixture, SuccessfullyCreatingSharedMemoryReturnsSucces
         .WillOnce(Return(mock_method_memory_resource_));
 
     // When calling SetupMethods with the name of the registered ProxyMethod
+    const auto result = proxy_->SetupMethods(0U);
+
+    // Then no error is returned
+    EXPECT_TRUE(result.has_value());
+}
+
+TEST_F(ProxyMethodHandlingFixture, CreatesMethodSharedMemoryWithInterVmPathIfInterVmSupportIsConfigured)
+{
+    // Given a configuration with an enabled method and inter-VM support
+    LolaServiceInstanceDeployment lola_service_instance_deployment{
+        LolaServiceInstanceId{kLolaInstanceId},
+        {},
+        {},
+        {{kDummyMethodName0, LolaMethodInstanceDeployment{kDummyQueueSize0, true}}}};
+    lola_service_instance_deployment.inter_vm_support_ = true;
+    configuration_store_ = std::make_unique<ConfigurationStore>(
+        ConfigurationStore{InstanceSpecifier::Create(std::string{"my_instance_spec"}).value(),
+                           make_ServiceIdentifierType("foo"),
+                           QualityType::kASIL_B,
+                           kLolaServiceTypeDeploymentWithMethods,
+                           lola_service_instance_deployment});
+
+    // and that a ProxyMethod is registered
+    GivenAProxy().WithRegisteredProxyMethods(
+        {{kDummyMethodId0,
+          TypeErasedCallQueue::TypeErasedElementInfo{
+              kValidInArgsTypeErasedDataInfo, kValidReturnTypeTypeErasedDataInfo, kDummyQueueSize0},
+          MethodType::kMethod}});
+    ON_CALL(filesystem_fake_.GetStandard(), Exists(StartsWith(kInterVmMethodShmChannelPrefix)))
+        .WillByDefault(Return(false));
+
+    // Expecting that the method shared memory is created with the inter-VM path
+    auto mock_method_memory_resource = std::make_shared<memory::shared::SharedMemoryResourceMock>();
+    EXPECT_CALL(shared_memory_factory_mock_guard_.mock_, Create(StartsWith(kInterVmMethodChannelPrefix), _, _, _, _))
+        .WillOnce(Return(mock_method_memory_resource));
+    EXPECT_CALL(shared_memory_factory_mock_guard_.mock_, Create(StartsWith(kMethodChannelPrefix), _, _, _, _)).Times(0);
+
+    // When calling SetupMethods
     const auto result = proxy_->SetupMethods(0U);
 
     // Then no error is returned

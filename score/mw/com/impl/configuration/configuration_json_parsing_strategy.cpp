@@ -104,6 +104,10 @@ constexpr auto kApplicationIdKey = "applicationID"sv;
 constexpr auto kTracingTraceFilterConfigPathKey = "traceFilterConfigPath"sv;
 constexpr auto kInterVmSupport = "interVmSupport"sv;
 constexpr auto kInterVmForwarded = "interVmForwarded"sv;
+constexpr auto kInterVmSharedMemoryKey = "interVmSharedMemory"sv;
+constexpr auto kRegionPathKey = "regionPath"sv;
+constexpr auto kRegionSizeKey = "regionSize"sv;
+constexpr auto kVmIndexKey = "vmIndex"sv;
 constexpr auto kNumberOfIpcTracingSlotsKey = "numberOfIpcTracingSlots"sv;
 using NumberOfIpcTracingSlots_t = std::uint8_t;
 constexpr auto kNumberOfIpcTracingSlotsDefault = static_cast<NumberOfIpcTracingSlots_t>(0U);
@@ -1199,6 +1203,44 @@ auto ParseSenderQueueSize(const score::json::Object& global_config_map) -> std::
 
 // See Note 1
 // coverity[autosar_cpp14_a15_5_3_violation]
+auto ParseInterVmSharedMemory(const score::json::Any& inter_vm_shared_memory_json) -> InterVmSharedMemoryConfiguration
+{
+    const auto inter_vm_shared_memory_obj = inter_vm_shared_memory_json.As<score::json::Object>();
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(inter_vm_shared_memory_obj.has_value(),
+                                                      "Configuration corrupted, check with json schema");
+    const auto& inter_vm_shared_memory_map = inter_vm_shared_memory_obj.value().get();
+
+    const auto& region_path_it = inter_vm_shared_memory_map.find(kRegionPathKey);
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_path_it != inter_vm_shared_memory_map.cend(),
+                                                      "Configuration corrupted, check with json schema");
+    const auto region_path = region_path_it->second.As<std::string>();
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_path.has_value() && (!region_path.value().get().empty()),
+                                                      "Configuration corrupted, check with json schema");
+
+    const auto& region_size_it = inter_vm_shared_memory_map.find(kRegionSizeKey);
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_size_it != inter_vm_shared_memory_map.cend(),
+                                                      "Configuration corrupted, check with json schema");
+    const auto region_size = region_size_it->second.As<std::uint64_t>();
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_size.has_value() && (region_size.value() > 0U),
+                                                      "Configuration corrupted, check with json schema");
+
+    InterVmSharedMemoryConfiguration::VmIndex vm_index{0U};
+    const auto& vm_index_it = inter_vm_shared_memory_map.find(kVmIndexKey);
+    if (vm_index_it != inter_vm_shared_memory_map.cend())
+    {
+        const auto vm_index_casted = vm_index_it->second.As<std::uint64_t>();
+        SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(
+            vm_index_casted.has_value() &&
+                (vm_index_casted.value() < InterVmSharedMemoryConfiguration::kMaxNumberOfVms),
+            "Configuration corrupted, check with json schema");
+        vm_index = static_cast<InterVmSharedMemoryConfiguration::VmIndex>(vm_index_casted.value());
+    }
+
+    return InterVmSharedMemoryConfiguration{region_path.value().get(), region_size.value(), vm_index};
+}
+
+// See Note 1
+// coverity[autosar_cpp14_a15_5_3_violation]
 auto ParseGlobalProperties(const score::json::Object& top_level_object) -> GlobalConfiguration
 {
     GlobalConfiguration global_configuration{};
@@ -1274,6 +1316,12 @@ auto ParseGlobalProperties(const score::json::Object& top_level_object) -> Globa
                 "Configuration corrupted, check with json schema");
             const auto app_id = application_id_casted.value();
             global_configuration.SetApplicationId(app_id);
+        }
+
+        const auto& inter_vm_shared_memory_it = process_properties_map.find(kInterVmSharedMemoryKey);
+        if (inter_vm_shared_memory_it != process_properties_map.cend())
+        {
+            global_configuration.SetInterVmSharedMemory(ParseInterVmSharedMemory(inter_vm_shared_memory_it->second));
         }
     }
     else

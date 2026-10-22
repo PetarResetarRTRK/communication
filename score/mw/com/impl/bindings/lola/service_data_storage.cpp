@@ -92,24 +92,28 @@ const EventMetaInfo& ServiceDataStorage::GetEventMetaInfo(const ElementFqId elem
     return GetOrTerminate(events_metainfo_, element_fq_id);
 }
 
-pid_t ServiceDataStorage::GetSkeletonPid() const
+pid_t ServiceDataStorage::GetSkeletonPid(const InterVmSharedMemoryConfiguration::VmIndex vm_index) const
 {
-    return skeleton_pid_;
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(vm_index < skeleton_pids_.size(), "Invalid VM index");
+    return skeleton_pids_[vm_index];
 }
 
-void ServiceDataStorage::UpdateSkeletonPid(const pid_t pid)
+void ServiceDataStorage::UpdateSkeletonPid(const InterVmSharedMemoryConfiguration::VmIndex vm_index, const pid_t pid)
 {
-    skeleton_pid_ = pid;
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(vm_index < skeleton_pids_.size(), "Invalid VM index");
+    skeleton_pids_[vm_index] = pid;
 }
 
-uid_t ServiceDataStorage::GetSkeletonUid() const
+uid_t ServiceDataStorage::GetSkeletonUid(const InterVmSharedMemoryConfiguration::VmIndex vm_index) const
 {
-    return skeleton_uid_;
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(vm_index < skeleton_uids_.size(), "Invalid VM index");
+    return skeleton_uids_[vm_index];
 }
 
-void ServiceDataStorage::UpdateSkeletonUid(const uid_t uid)
+void ServiceDataStorage::UpdateSkeletonUid(const InterVmSharedMemoryConfiguration::VmIndex vm_index, const uid_t uid)
 {
-    skeleton_uid_ = uid;
+    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(vm_index < skeleton_uids_.size(), "Invalid VM index");
+    skeleton_uids_[vm_index] = uid;
 }
 
 std::size_t CalculateServiceDataStorageShmSize(

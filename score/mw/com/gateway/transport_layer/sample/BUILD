@@ -108,7 +108,6 @@ cc_library(
     features = COMPILER_WARNING_FEATURES,
     implementation_deps = [
         "//score/mw/com/gateway/transport_layer/sample/messages:gateway_messages",
-        "//score/mw/com/impl:runtime",
         "@score_baselibs//score/mw/log",
     ],
     visibility = [
@@ -217,8 +216,6 @@ cc_unit_test(
         ":sample_hypervisor_transport",
         "//score/mw/com/gateway/gateway_application:gateway_core_mock",
         "//score/mw/com/gateway/transport_layer:transport_error",
-        "//score/mw/com/impl/test:dummy_instance_identifier_builder",
-        "//score/mw/com/impl/test:runtime_mock_guard",
         "@score_baselibs//score/mw/log",
         "@score_baselibs//score/mw/log:recorder_mock",
     ],

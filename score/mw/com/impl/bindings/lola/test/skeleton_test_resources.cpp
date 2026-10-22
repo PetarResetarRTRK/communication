@@ -277,7 +277,8 @@ SkeletonMockedMemoryFixture& SkeletonMockedMemoryFixture::InitialiseSkeletonWith
         *lola_service_instance_deployment_ptr,
         *lola_service_type_deployment_ptr,
         filesystem_fake_.CreateInstance(),
-        std::make_unique<ShmPathBuilder>(lola_service_type_deployment_ptr->service_id_),
+        std::make_unique<ShmPathBuilder>(lola_service_type_deployment_ptr->service_id_,
+                                         lola_service_instance_deployment_ptr->inter_vm_support_),
         std::make_unique<PartialRestartPathBuilder>(lola_service_type_deployment_ptr->service_id_),
         std::optional<memory::shared::LockFile>{},
         nullptr);

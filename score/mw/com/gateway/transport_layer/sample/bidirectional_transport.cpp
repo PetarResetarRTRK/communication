@@ -224,11 +224,13 @@ void BidirectionalTransport::ConnectionLoop(score::cpp::stop_token stop_token)
         }
 
         is_connected_ = true;
+        DispatchConnectionStateChange(true);
         ReceiveUntilDisconnect(stop_token);
 
         CleanupSocketsForReconnection();
         if (!stop_token.stop_requested())
         {
+            DispatchConnectionStateChange(false);
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
@@ -334,7 +336,7 @@ void BidirectionalTransport::HandleIncomingMessage(std::unique_ptr<TransportMess
     // Post to dispatch queue rather than calling the handler inline.
     {
         std::lock_guard<std::mutex> lock(dispatch_mutex_);
-        dispatch_queue_.push(std::move(message));
+        dispatch_queue_.push(DispatchItem{std::move(message), false});
     }
     dispatch_cv_.notify_one();
 }
@@ -354,7 +356,7 @@ void BidirectionalTransport::DispatchLoop(const score::cpp::stop_token& stop_tok
 {
     while (!stop_token.stop_requested())
     {
-        std::unique_ptr<TransportMessage> message;
+        DispatchItem item{nullptr, false};
         {
             std::unique_lock<std::mutex> lock(dispatch_mutex_);
             dispatch_cv_.wait(lock, [this] {
@@ -366,11 +368,18 @@ void BidirectionalTransport::DispatchLoop(const score::cpp::stop_token& stop_tok
                 break;
             }
 
-            message = std::move(dispatch_queue_.front());
+            item = std::move(dispatch_queue_.front());
             dispatch_queue_.pop();
         }
 
-        message_handler_(std::move(message));  // COV_JUSTIFIED gateway-dispatch-loop-calls-handler
+        if (item.message != nullptr)
+        {
+            message_handler_(std::move(item.message));  // COV_JUSTIFIED gateway-dispatch-loop-calls-handler
+        }
+        else
+        {
+            connection_state_handler_(item.is_connected);
+        }
     }
 }
 
@@ -473,6 +482,25 @@ void BidirectionalTransport::SetMessageHandler(MessageHandler handler)
 {
     message_handler_ = std::move(handler);
     has_message_handler_ = true;
+}
+
+void BidirectionalTransport::SetConnectionStateHandler(ConnectionStateHandler handler)
+{
+    connection_state_handler_ = std::move(handler);
+    has_connection_state_handler_ = true;
+}
+
+void BidirectionalTransport::DispatchConnectionStateChange(const bool is_connected)
+{
+    if (!has_connection_state_handler_)
+    {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(dispatch_mutex_);
+        dispatch_queue_.push(DispatchItem{nullptr, is_connected});
+    }
+    dispatch_cv_.notify_one();
 }
 
 bool BidirectionalTransport::IsConnected() const

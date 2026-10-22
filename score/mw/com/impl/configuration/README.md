@@ -344,6 +344,12 @@ dependent properties.
 - `interVmSupport`: This is a `SHM` `binding` specific optional setting, which controls whether the shared-memory 
   objects for this instance are created so that they can be shared among VMs on the same ECU. In this case the SHM 
   implementation potentially uses different mechanisms/path-names to create/open shm-objects. 
+  A provider of such an instance never removes or recreates existing shared-memory objects, since proxies on another
+  VM might still use them. It reuses them, if they still exist when it offers the service again.
+  Providers and consumers of such an instance place/find its shm-objects in the shared memory region configured in the
+  [global section](#intervmsharedmemory). Service ID, instance ID, `asilLevel` and the sizes (e.g.
+  `numberOfSampleSlots`, `maxSubscribers`) of the instance have to be the same on all VMs, since they determine the
+  names and the layout of the shared shm-objects.
 - `interVmForwarded`: This is a `SHM` `binding` specific optional setting, which controls if the `service-instance` is 
   expected to be shared between VM instances. In this case the provider of this service instance in the target 
   gateway domain is not creating an SHM-object, but instead opens an SHM-object that has been created on the actual 
@@ -493,7 +499,12 @@ configuration object, which is of a json object type.
             "B-receiver": 5,
             "B-sender": 12
         },
-       "shm-size-calc-mode": "SIMULATION"
+       "shm-size-calc-mode": "SIMULATION",
+       "interVmSharedMemory": {
+            "regionPath": "/dev/shmem/lola-intervm",
+            "regionSize": 134217728,
+            "vmIndex": 0
+       }
     },
     ...
 }
@@ -548,6 +559,24 @@ which is also the default value. It simulates the creation of the shared-memory 
 heap-memory backed memory-resource. Thus, it means heap allocation during startup. This allocated memory is then directly
 freed again. The benefit is, that the simulation exactly measures with byte accuracy the memory needs for
 the shared-memory objects, so we can create them once with the correct size, without any need to resize afterwards.
+
+##### interVmSharedMemory
+
+`interVmSharedMemory` is an optional property specific to the `SHM` binding. It configures the shared memory region,
+which the hypervisor shares between VMs. The shm-objects of all service instances with
+[interVmSupport](#instances) are placed into this region, so that providers and consumers on different VMs use the very
+same shm-objects. The region starts with a directory of its shm-objects (see
+[score/memory/shared/intervm](../../../../memory/shared/intervm/README.md)). Without this property, shm-objects of
+service instances with `interVmSupport` can only be created/opened by processes, which install their own inter-VM memory
+provider.
+
+- `regionPath`: Path of the file, which gives access to the region on this VM, e.g. the POSIX shm-object of the region
+  on the hypervisor host (`/dev/shmem/<name>` on QNX) or the device node of the driver of the shared memory device within
+  a guest. The file has to support `mmap()` with offsets, and the processes need read/write access to it.
+- `regionSize`: Size of the region in bytes. It has to be the same on all VMs.
+- `vmIndex`: Index of this VM (`0` or `1`, default `0`). Each VM sharing the region needs a distinct one: Providers store
+  their pid/uid per VM within the shared shm-objects, so that consumers on each VM reach the provider (or the gateway's
+  forwarding skeleton) of their own VM. `applicationID`s have to be unique across all VMs sharing the region, too.
 
 #### Tracing settings
 

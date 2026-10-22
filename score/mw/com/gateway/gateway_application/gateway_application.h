@@ -63,6 +63,8 @@ class GatewayApplication : public GatewayCore
     score::Result<void> NotifyUpdate(score::mw::com::InstanceSpecifier service_instance_specifier,
                                      impl::ServiceElementType updated_element_type,
                                      std::string updated_element_name) override;
+    void OnRemoteGatewayConnected() override;
+    void OnRemoteGatewayDisconnected() override;
 
   private:
     using FindCallbackScopedCb =
@@ -74,6 +76,9 @@ class GatewayApplication : public GatewayCore
 
     std::recursive_mutex mutex_;
     std::unordered_map<std::string, score::mw::com::GenericProxy> proxies_;
+    /// \brief Forwarded services, which are currently available locally (i.e. found and not disappeared again).
+    /// \details proxies_ is not sufficient for this, since proxies are kept alive after a service disappeared.
+    std::unordered_set<std::string> available_services_;
     std::unordered_map<std::string, score::mw::com::GenericSkeleton> skeletons_;
     std::vector<score::mw::com::FindServiceHandle> find_handles_;
     std::unordered_map<std::string, std::unordered_set<std::string>> active_event_subscriptions_;

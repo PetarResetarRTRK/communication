@@ -157,4 +157,17 @@ std::shared_ptr<score::memory::shared::TypedMemory> score::memory::shared::Typed
     return std::make_shared<internal::TypedMemoryImpl>();
 }
 
+score::cpp::expected<TypedMemory::RegionObject, score::os::Error> TypedMemory::CreateNamedRegionObject(
+    std::string_view /*shm_name*/,
+    const std::size_t /*shm_size*/) const noexcept
+{
+    return score::cpp::make_unexpected(score::os::Error::createFromErrno(ENOTSUP));
+}
+
+score::cpp::expected<TypedMemory::RegionObject, score::os::Error> TypedMemory::OpenNamedRegionObject(
+    std::string_view /*shm_name*/) const noexcept
+{
+    return score::cpp::make_unexpected(score::os::Error::createFromErrno(ENOTSUP));
+}
+
 }  // namespace score::memory::shared

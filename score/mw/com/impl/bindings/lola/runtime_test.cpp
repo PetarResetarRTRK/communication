@@ -14,8 +14,16 @@
 #include "score/mw/com/impl/configuration/configuration.h"
 
 #include "score/concurrency/long_running_threads_container.h"
+#include "score/memory/shared/intervm/shared_memory_region.h"
+#include "score/memory/shared/shared_memory_factory.h"
 
+#include "score/os/fcntl.h"
+#include "score/os/mman.h"
 #include "score/os/mocklib/unistdmock.h"
+#include "score/os/stat.h"
+#include "score/os/unistd.h"
+
+#include <score/utility.hpp>
 
 #include "gmock/gmock.h"
 #include <gtest/gtest.h>
@@ -81,6 +89,61 @@ TEST_F(RuntimeFixture, EnsureBindingTypeIsLoLa)
 {
 
     EXPECT_EQ(unit_->GetBindingType(), score::mw::com::impl::BindingType::kLoLa);
+}
+
+TEST_F(RuntimeFixture, VmIndexIsZeroWithoutInterVmSharedMemory)
+{
+    // Given a configuration without inter-VM shared memory region (see SetUp)
+    // Then the VM index is 0
+    EXPECT_EQ(unit_->GetVmIndex(), 0U);
+}
+
+TEST_F(RuntimeFixture, InterVmSharedMemoryRegionIsUsedForInterVmShmObjects)
+{
+    // Given an inter-VM shared memory region, which is simulated by a POSIX shm-object
+    constexpr auto kRegionShmName = "/score_mw_com_lola_runtime_test_region";
+#if defined(__QNXNTO__)
+    constexpr auto kRegionPath = "/dev/shmem/score_mw_com_lola_runtime_test_region";
+#else
+    constexpr auto kRegionPath = "/dev/shm/score_mw_com_lola_runtime_test_region";
+#endif
+    constexpr std::uint64_t kRegionSize{1024U * 1024U};
+    const auto region_file_descriptor =
+        score::os::Mman::instance().shm_open(kRegionShmName,
+                                             score::os::Fcntl::Open::kReadWrite | score::os::Fcntl::Open::kCreate,
+                                             score::os::Stat::Mode::kReadUser | score::os::Stat::Mode::kWriteUser);
+    ASSERT_TRUE(region_file_descriptor.has_value());
+    ASSERT_TRUE(score::os::Unistd::instance()
+                    .ftruncate(region_file_descriptor.value(), static_cast<off_t>(kRegionSize))
+                    .has_value());
+    score::cpp::ignore = score::os::Unistd::instance().close(region_file_descriptor.value());
+
+    // and a configuration, which places shm-objects of service instances with interVmSupport into the region
+    GlobalConfiguration global_configuration{};
+    global_configuration.SetInterVmSharedMemory(InterVmSharedMemoryConfiguration{kRegionPath, kRegionSize, 1U});
+
+    // When creating the runtime
+    SetConfig(Configuration::ServiceTypeDeployments{},
+              Configuration::ServiceInstanceDeployments{},
+              std::move(global_configuration),
+              TracingConfiguration{});
+
+    // Then the VM index is taken from the configuration
+    EXPECT_EQ(unit_->GetVmIndex(), 1U);
+
+    // and inter-VM shm-objects are created within the region
+    constexpr auto kInterVmShmPath = "/intervm-shared-shmem/lola-data-0000000000000001-00001";
+    const auto resource = score::memory::shared::SharedMemoryFactory::Create(
+        kInterVmShmPath, [](auto) {}, 64U, score::memory::shared::SharedMemoryFactory::WorldWritable{});
+    EXPECT_NE(resource, nullptr);
+    const score::memory::shared::SharedMemoryRegion other_user_of_region{kRegionPath, kRegionSize};
+    const auto region_object = other_user_of_region.OpenNamedRegionObject(kInterVmShmPath);
+    ASSERT_TRUE(region_object.has_value());
+    score::cpp::ignore = score::os::Unistd::instance().close(region_object.value().file_descriptor);
+
+    score::memory::shared::SharedMemoryFactory::Remove(kInterVmShmPath);
+    score::memory::shared::SharedMemoryFactory::SetInterVMMemoryProvider(nullptr);
+    score::cpp::ignore = score::os::Mman::instance().shm_unlink(kRegionShmName);
 }
 
 TEST_F(RuntimeFixture, EnsureCorrectAsilQMSupport)

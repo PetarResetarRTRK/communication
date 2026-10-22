@@ -65,6 +65,8 @@ using namespace ::testing;
 
 const std::string kShmControlPathPrefix{"/lola-ctl-"};
 const std::string kShmDataPathPrefix{"/lola-data-"};
+const std::string kInterVmShmControlPathPrefix{"/intervm-shared-shmem/lola-ctl-"};
+const std::string kInterVmShmDataPathPrefix{"/intervm-shared-shmem/lola-data-"};
 
 const auto service = make_ServiceIdentifierType("foo");
 const ServiceTypeDeployment kServiceTypeDeployment{LolaServiceTypeDeployment{0x1234}};
@@ -108,6 +110,24 @@ TEST_F(ProxyCreationFixture, ProxyCreationReturnsAValidProxy)
 
     // Then a valid proxy is created
     EXPECT_NE(proxy_, nullptr);
+}
+
+TEST_F(ProxyCreationFixture, ProxyUsesTheSkeletonPidOfItsVm)
+{
+    // Given a DATA section shared between VMs, in which the skeletons on both VMs stored their PIDs
+    const pid_t second_vm_skeleton_pid{kDummyPid + 1};
+    constexpr InterVmSharedMemoryConfiguration::VmIndex kSecondVmIndex{1U};
+    fake_data_->data_storage->UpdateSkeletonPid(kSecondVmIndex, second_vm_skeleton_pid);
+
+    // and that the process runs on the second VM
+    ON_CALL(binding_runtime_, GetVmIndex()).WillByDefault(Return(kSecondVmIndex));
+
+    // When creating a proxy
+    InitialiseProxyWithCreate(identifier_);
+
+    // Then it uses the PID of the skeleton on its VM
+    ASSERT_NE(proxy_, nullptr);
+    EXPECT_EQ(proxy_->GetSourcePid(), second_vm_skeleton_pid);
 }
 
 TEST_F(ProxyCreationFixture, ProxyCreationOpensSharedMemoryWithoutProvidersIfNotSpecifiedInConfiguration)
@@ -163,6 +183,34 @@ TEST_F(ProxyCreationFixture, ProxyCreationOpensSharedMemoryWithProvidersFromConf
 
     // When creating a proxy
     InitialiseProxyWithCreate(identifier);
+}
+
+TEST_F(ProxyCreationFixture, ProxyCreationOpensInterVmSharedMemoryIfInterVmSupportIsConfigured)
+{
+    // Given a valid deployment information with inter-VM support enabled
+    LolaServiceInstanceDeployment lola_service_instance_deployment{LolaServiceInstanceId{kLolaServiceInstanceId}};
+    lola_service_instance_deployment.inter_vm_support_ = true;
+
+    const auto service_instance_deployment_with_inter_vm_support =
+        ServiceInstanceDeployment{service, lola_service_instance_deployment, QualityType::kASIL_QM, kInstanceSpecifier};
+    const auto identifier =
+        make_InstanceIdentifier(service_instance_deployment_with_inter_vm_support, kServiceTypeDeployment);
+
+    // Expecting that the shared memory control and data regions will be opened with inter-VM paths
+    EXPECT_CALL(shared_memory_factory_mock_guard_.mock_, Open(StartsWith(kInterVmShmControlPathPrefix), true, _))
+        .WillOnce(Return(fake_data_->control_memory));
+    EXPECT_CALL(shared_memory_factory_mock_guard_.mock_, Open(StartsWith(kInterVmShmDataPathPrefix), false, _))
+        .WillOnce(Return(fake_data_->data_memory_resource));
+
+    // and that the standard shm paths are not opened
+    EXPECT_CALL(shared_memory_factory_mock_guard_.mock_, Open(StartsWith(kShmControlPathPrefix), _, _)).Times(0);
+    EXPECT_CALL(shared_memory_factory_mock_guard_.mock_, Open(StartsWith(kShmDataPathPrefix), _, _)).Times(0);
+
+    // When creating a proxy
+    InitialiseProxyWithCreate(identifier);
+
+    // Then a valid proxy is created
+    EXPECT_NE(proxy_, nullptr);
 }
 
 TEST_F(ProxyCreationFixture, SharedMemoryFactoryOpenReturningNullPtrOnProxyCreationReturnsNullPtr)

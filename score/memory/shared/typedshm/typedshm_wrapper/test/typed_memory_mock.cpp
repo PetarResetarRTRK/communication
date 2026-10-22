@@ -11,3 +11,18 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 #include "score/memory/shared/typedshm/typedshm_wrapper/test/typed_memory_mock.h"
+
+#include <cerrno>
+
+namespace score::memory::shared
+{
+
+TypedMemoryMock::TypedMemoryMock()
+{
+    ON_CALL(*this, CreateNamedRegionObject(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Return(score::cpp::make_unexpected(score::os::Error::createFromErrno(ENOTSUP))));
+    ON_CALL(*this, OpenNamedRegionObject(::testing::_))
+        .WillByDefault(::testing::Return(score::cpp::make_unexpected(score::os::Error::createFromErrno(ENOTSUP))));
+}
+
+}  // namespace score::memory::shared

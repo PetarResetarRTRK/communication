@@ -183,7 +183,7 @@ OpenSharedMemory(const LolaServiceInstanceDeployment& instance_deployment,
         providers = std::make_optional(score::cpp::span<const uid_t>{});
     }
 
-    ShmPathBuilder shm_path_builder{lola_service_deployment.service_id_};
+    ShmPathBuilder shm_path_builder{lola_service_deployment.service_id_, instance_deployment.inter_vm_support_};
     const auto control_shm = shm_path_builder.GetControlChannelShmName(lola_service_instance_id.GetId(), quality_type);
     const auto data_shm = shm_path_builder.GetDataChannelShmName(lola_service_instance_id.GetId());
 
@@ -234,11 +234,12 @@ score::Result<void> ExecutePartialRestartLogic(const QualityType quality_type,
     // 'applicationID' or the process UID as a fallback.
     const TransactionLogId transaction_log_id{lola_runtime.GetApplicationId()};
     auto& service_data_control = GetServiceDataControl(control);
-    TransactionLogRollbackExecutor transaction_log_rollback_executor{service_data_control,
-                                                                     skeleton_instance_identifier,
-                                                                     quality_type,
-                                                                     service_data_storage.GetSkeletonPid(),
-                                                                     transaction_log_id};
+    TransactionLogRollbackExecutor transaction_log_rollback_executor{
+        service_data_control,
+        skeleton_instance_identifier,
+        quality_type,
+        service_data_storage.GetSkeletonPid(lola_runtime.GetVmIndex()),
+        transaction_log_id};
     const auto rollback_result = transaction_log_rollback_executor.RollbackTransactionLogs();
     if (!rollback_result.has_value())
     {
@@ -774,7 +775,8 @@ memory::shared::SharedMemoryFactory::UserPermissions Proxy::GetSkeletonShmPermis
     SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(data_ != nullptr,
                                                       "Proxy::GetSourcePid: Managed memory data pointer is Null");
     const auto& service_data_storage = detail_proxy::GetServiceDataStorage(*data_);
-    const auto skeleton_uid = service_data_storage.GetSkeletonUid();
+    const auto skeleton_uid =
+        service_data_storage.GetSkeletonUid(GetBindingRuntime<lola::IRuntime>(BindingType::kLoLa).GetVmIndex());
 
     const memory::shared::SharedMemoryFactory::UserPermissionsMap permissions_map{
         {os::Acl::Permission::kRead, {skeleton_uid}}, {os::Acl::Permission::kWrite, {skeleton_uid}}};
@@ -893,7 +895,7 @@ std::string Proxy::GetMethodChannelShmName() const
     const auto lola_instance_id = lola_instance_deployment.instance_id_.value();
 
     const auto& lola_service_deployment = GetLoLaServiceTypeDeployment(handle_);
-    ShmPathBuilder shm_path_builder{lola_service_deployment.service_id_};
+    ShmPathBuilder shm_path_builder{lola_service_deployment.service_id_, lola_instance_deployment.inter_vm_support_};
     return shm_path_builder.GetMethodChannelShmName(lola_instance_id.GetId(), proxy_instance_identifier_);
 }
 
@@ -907,7 +909,7 @@ pid_t Proxy::GetSourcePid() const noexcept
     SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(data_ != nullptr,
                                                       "Proxy::GetSourcePid: Managed memory data pointer is Null");
     auto& service_data_storage = detail_proxy::GetServiceDataStorage(*data_);
-    return service_data_storage.GetSkeletonPid();
+    return service_data_storage.GetSkeletonPid(GetBindingRuntime<lola::IRuntime>(BindingType::kLoLa).GetVmIndex());
 }
 
 void Proxy::RegisterEvent(const std::string_view service_element_name, ProxyEvent& proxy_event) noexcept

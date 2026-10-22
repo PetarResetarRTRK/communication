@@ -40,6 +40,7 @@
 #include <score/utility.hpp>
 #include <cerrno>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -326,7 +327,9 @@ void SharedMemoryResource::UnlinkFilesystemEntry() const noexcept
     // there's no way for path to equal nullptr using the public interface.)
     if (path != nullptr)
     {
-        if (!is_shm_in_typed_memory_)
+        // shm-objects in typed memory or in the shared memory region of the typed memory provider are unlinked via the
+        // provider.
+        if ((!is_shm_in_typed_memory_) && (!is_shm_in_region_))
         {
             // This requirement broken_link_c/issue/57467 directly excludes memory::shared (which
             // is part of mw::com) from the ban by listing it in the not relevant for field.
@@ -474,6 +477,8 @@ SharedMemoryResource::SharedMemoryResource(std::variant<std::string, std::uint64
       control_block_{nullptr},
       acl_factory_{std::move(acl_factory)},
       is_shm_in_typed_memory_{false},
+      is_shm_in_region_{false},
+      mapping_offset_{0},
       log_identification_{std::holds_alternative<std::string>(identifier)
                               ? "file: " + std::get<std::string>(identifier)
                               : "id: " + std::to_string(std::get<std::uint64_t>(identifier))},
@@ -513,6 +518,29 @@ score::cpp::expected_blank<Error> SharedMemoryResource::CreateImpl(const std::si
         if (!create_lock_file_result.has_value())
         {
             return score::cpp::make_unexpected(create_lock_file_result.error());
+        }
+    }
+
+    // A typed memory provider, which manages a shared memory region (e.g. shared between VMs), places named
+    // shm-objects into its region. Permissions are not applied to them, since access is controlled by the access
+    // rights of the region.
+    if ((path != nullptr) && (typed_memory_ptr_ != nullptr))
+    {
+        const auto region_object = typed_memory_ptr_->CreateNamedRegionObject(*path, virtual_address_space_to_reserve_);
+        if (region_object.has_value())
+        {
+            AdoptRegionObject(region_object.value());
+            this->mapMemoryIntoProcess();
+            this->initializeInternalsInSharedMemory();
+            initialize_callback(getSharedPtr());
+            return {};
+        }
+        if (region_object.error() != Error::Code::kOperationNotSupported)
+        {
+            score::mw::log::LogError("shm")
+                << "Unexpected error while creating " << log_identification_
+                << " in the shared memory region of the typed memory provider:" << region_object.error();
+            return score::cpp::make_unexpected(region_object.error());
         }
     }
 
@@ -621,6 +649,22 @@ auto SharedMemoryResource::acquireLockAndOpenSharedMemory() -> score::cpp::expec
     SCORE_LANGUAGE_FUTURECPP_ASSERT_PRD_MESSAGE(is_named_shm, "shm-object file path is not set.");
     const auto lock_file = this->acquireLockFile();
 
+    if (typed_memory_ptr_ != nullptr)
+    {
+        const auto region_object = typed_memory_ptr_->OpenNamedRegionObject(*path);
+        if (region_object.has_value())
+        {
+            AdoptRegionObject(region_object.value());
+            this->loadInternalsFromSharedMemory();
+            return {};
+        }
+        if (region_object.error() != Error::Code::kOperationNotSupported)
+        {
+            // Error severity depends on the caller, like for shm_open below.
+            return score::cpp::make_unexpected(region_object.error());
+        }
+    }
+
     // NOLINTNEXTLINE(score-banned-function) need to use shm_open for correct behavior
     const auto result = ::score::os::Mman::instance().shm_open(path->data(), this->opening_mode_, read_only);
     if (!result.has_value())
@@ -680,7 +724,14 @@ auto SharedMemoryResource::getOwnerUid() const noexcept -> uid_t
 // coverity[autosar_cpp14_a0_1_3_violation] false-positive: used in constructor
 auto SharedMemoryResource::GetLockFilePath(const std::string& input_path) noexcept -> std::string
 {
-    return std::string{kTmpPathPrefix} + input_path + "_lock";
+    // The paths of shm-objects, which are shared between VMs, contain a directory (e.g. "/intervm-shared-shmem/...").
+    // Lock files are always created directly within the lock file directory, so the directory separators are replaced.
+    std::string lock_file_name{input_path};
+    if (lock_file_name.size() > 1U)
+    {
+        std::replace(std::next(lock_file_name.begin()), lock_file_name.end(), '/', '_');
+    }
+    return std::string{kTmpPathPrefix} + lock_file_name + "_lock";
 }
 
 // coverity[autosar_cpp14_m7_3_1_violation] false-positive: class method (Ticket-234468)
@@ -951,7 +1002,7 @@ auto SharedMemoryResource::mapMemoryIntoProcess() noexcept -> void
                                                            this->map_mode_,
                                                            ::score::os::Mman::Map::kShared,
                                                            this->file_descriptor_,
-                                                           0);
+                                                           mapping_offset_);
 
     if (!result.has_value())
     {
@@ -1071,6 +1122,18 @@ void SharedMemoryResource::AllocateInTypedMemory(const UserPermissions& permissi
                 << log_identification_ << "Reason: " << allocate_anonymous_typed_memory_result.error();
         }
     }
+}
+
+void SharedMemoryResource::AdoptRegionObject(const TypedMemory::RegionObject& region_object) noexcept
+{
+    file_descriptor_ = region_object.file_descriptor;
+    mapping_offset_ = safe_math::Cast<std::int64_t>(region_object.offset).value();
+    virtual_address_space_to_reserve_ = region_object.size;
+    // The region is shared with other VMs, whose uids aren't related to the ones of this VM. So the owner of a
+    // shm-object in the region can't be checked against the allowed providers. Access is controlled by the access
+    // rights of the region instead, so this process is regarded as the owner.
+    file_owner_uid_ = ::score::os::Unistd::instance().getuid();
+    is_shm_in_region_ = true;
 }
 
 score::cpp::expected_blank<score::os::Error> SharedMemoryResource::OpenSharedMemory(const Fcntl::Open& flags,

@@ -27,9 +27,11 @@
 #include "score/expected.hpp"
 
 #include <sys/mman.h>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace score::memory::shared
 {
@@ -37,6 +39,18 @@ namespace score::memory::shared
 class TypedMemory
 {
   public:
+    /// \brief Location of a named shm-object within a shared memory region, which is managed by a provider (e.g. a
+    ///        region shared between VMs).
+    struct RegionObject
+    {
+        /// \brief File descriptor of the shared memory region. It is owned by the caller, which has to close it.
+        std::int32_t file_descriptor;
+        /// \brief Offset of the shm-object within the shared memory region. It is a multiple of the page size.
+        std::uint64_t offset;
+        /// \brief Size of the shm-object in bytes.
+        std::size_t size;
+    };
+
     virtual ~TypedMemory() = default;
     /*!
      * \brief Creates a new instance of the production implementation.
@@ -55,6 +69,24 @@ class TypedMemory
     virtual score::cpp::expected_blank<score::os::Error> Unlink(std::string_view shm_name) const noexcept = 0;
 
     virtual score::cpp::expected<uid_t, score::os::Error> GetCreatorUid(std::string_view shm_name) const noexcept = 0;
+
+    /// \brief Creates a named shm-object within the shared memory region of the provider. If a shm-object with this
+    ///        name already exists in the region and is large enough, it is reused.
+    /// \details Providers, which don't place shm-objects into a shared memory region (e.g. typed memory), don't
+    ///          override this, so that the shm-object gets created as usual.
+    /// \return The location of the shm-object in the region, or kOperationNotSupported, if the provider doesn't place
+    ///         shm-objects into a shared memory region, or another error, if creating it in the region failed.
+    virtual score::cpp::expected<RegionObject, score::os::Error> CreateNamedRegionObject(
+        std::string_view shm_name,
+        const std::size_t shm_size) const noexcept;
+
+    /// \brief Opens a named shm-object, which has been created within the shared memory region of the provider.
+    /// \details See CreateNamedRegionObject().
+    /// \return The location of the shm-object in the region, or kOperationNotSupported, if the provider doesn't place
+    ///         shm-objects into a shared memory region, or kNoSuchFileOrDirectory, if there is no such shm-object in
+    ///         the region, or another error, if opening it failed.
+    virtual score::cpp::expected<RegionObject, score::os::Error> OpenNamedRegionObject(
+        std::string_view shm_name) const noexcept;
 
   protected:
     // Make all special member functions protected to prevent them ever being explicitly called (which can lead to

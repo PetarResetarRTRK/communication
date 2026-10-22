@@ -399,6 +399,10 @@ class SharedMemoryResource : public ISharedMemoryResource, public std::enable_sh
     ControlBlock* control_block_;
     AccessControlListFactory acl_factory_;
     bool is_shm_in_typed_memory_;
+    /// \brief Whether the shm-object is part of the shared memory region of the typed memory provider.
+    bool is_shm_in_region_;
+    /// \brief Offset of the shm-object within the file referred to by file_descriptor_.
+    std::int64_t mapping_offset_;
     // Will contain `"file: " + path` in case of named shared memory resource
     // Will contain `"id: " + std::to_str(shared_memory_resource_id)` in case of anonymous shared memory resource
     std::string log_identification_;
@@ -421,6 +425,10 @@ class SharedMemoryResource : public ISharedMemoryResource, public std::enable_sh
     score::cpp::expected_blank<score::os::Error> CreateLockFileForNamedSharedMemory(std::optional<LockFile>& lock_file);
     // coverity[autosar_cpp14_m7_3_1_violation] false-positive: class method (Ticket-234468)
     void AllocateInTypedMemory(const UserPermissions& permissions, os::Fcntl::Open& flags) noexcept;
+
+    /// \brief Uses the given shm-object within the shared memory region of the typed memory provider as the backing
+    ///        storage of this resource (see TypedMemory::CreateNamedRegionObject()).
+    void AdoptRegionObject(const TypedMemory::RegionObject& region_object) noexcept;
 
     /// \brief Open shared memory from CreateImpl context
     /// \details This method is meant to be called exclusively from SharedMemoryResource::CreateImpl. It behaves

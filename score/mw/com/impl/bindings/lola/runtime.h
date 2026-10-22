@@ -84,6 +84,8 @@ class Runtime final : public IRuntime
 
     GlobalConfiguration::ApplicationId GetApplicationId() const noexcept override;
 
+    InterVmSharedMemoryConfiguration::VmIndex GetVmIndex() const noexcept override;
+
   private:
     const Configuration& configuration_;
     concurrency::Executor& long_running_threads_;
@@ -95,6 +97,7 @@ class Runtime final : public IRuntime
 
     pid_t pid_;
     std::uint32_t application_id_;
+    InterVmSharedMemoryConfiguration::VmIndex vm_index_;
 
     std::uint32_t DetermineApplicationIdentifier(const Configuration& config) const;
 };

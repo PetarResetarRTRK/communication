@@ -157,8 +157,14 @@ Skeleton::ShmReuseStrategy Skeleton::DetermineShmReuseStrategy(
     // (1) Previous skeleton stopped cleanly with no proxies, or
     // (2) Previous skeleton crashed
     // In both cases, we recreate the SHM to ensure a clean state.
+    // Exception: inter-VM SHM may still be used by proxies on another VM, which can't lock our usage marker file. So
+    // an existing inter-VM SHM region is reused and only created if there is none.
     if (previous_shm_region_unused_by_proxies)
     {
+        if (CreatesInterVmShm())
+        {
+            return ShmReuseStrategy::kReuseOrCreateInterVmShm;
+        }
         return ShmReuseStrategy::kRecreateShm;
     }
 
@@ -176,8 +182,9 @@ Skeleton::ShmRemovalStrategy Skeleton::DetermineShmRemovalStrategy(
         return ShmRemovalStrategy::kRemoveNeitherShmNorMarkerFile;
     }
 
-    // Gateway-forwarded services don't own the SHM (it's on the other VM), so only remove the marker file
-    if (IsGatewayForwardedSkeleton())
+    // Gateway-forwarded services don't own the SHM (it's on the other VM), so only remove the marker file.
+    // Inter-VM SHM may still be used by proxies on another VM, which can't lock our usage marker file, so it is kept.
+    if (IsGatewayForwardedSkeleton() || CreatesInterVmShm())
     {
         return ShmRemovalStrategy::kRemoveMarkerFileOnly;
     }
@@ -362,6 +369,33 @@ auto Skeleton::PrepareOffer(SkeletonEventBindings& events,
             }
             break;
 
+        case ShmReuseStrategy::kReuseOrCreateInterVmShm:
+            use_gateway_forwarded_shm_ = false;
+            // The register_shm_object_trace_callback is only handed over to CreateSharedMemory: An opened inter-VM SHM
+            // object is never reported as being in typed memory, so OpenExistingSharedMemory wouldn't call it anyway.
+            shm_setup_result = memory_manager_.OpenExistingSharedMemory(std::nullopt);
+            if (shm_setup_result.has_value())
+            {
+                score::mw::log::LogDebug("lola")
+                    << "Reusing inter-VM SHM of Skeleton (S:" << lola_service_id_ << "I:" << lola_instance_id_ << ")";
+                was_old_shm_region_reopened_ = true;
+                memory_manager_.CleanupSharedMemoryAfterCrash();
+                break;
+            }
+            score::mw::log::LogDebug("lola") << "No inter-VM SHM of Skeleton (S:" << lola_service_id_
+                                             << "I:" << lola_instance_id_ << ") to reuse, creating it";
+            was_old_shm_region_reopened_ = false;
+            // Releases (and unlinks) SHM objects of an incomplete region, which might have been opened above.
+            memory_manager_.RemoveSharedMemory();
+            memory_manager_.RemoveStaleSharedMemoryArtefacts();
+            shm_setup_result =
+                memory_manager_.CreateSharedMemory(events, fields, std::move(register_shm_object_trace_callback));
+            if (!(shm_setup_result.has_value()))
+            {
+                score::mw::log::LogError("lola") << "Could not create inter-VM shared memory region for Skeleton.";
+            }
+            break;
+
         // LCOV_EXCL_START (DetermineShmReuseStrategy always returns a valid strategy; kUnknownStrategy is unreachable)
         case ShmReuseStrategy::kUnknownStrategy:
         default:
@@ -492,7 +526,7 @@ auto Skeleton::PrepareStopOffer(std::optional<UnregisterShmObjectTraceCallback> 
 
         case ShmRemovalStrategy::kRemoveMarkerFileOnly:
             score::mw::log::LogDebug("lola")
-                << "Skeleton::PrepareStopOffer(): Gateway-forwarded service - removing marker file only (S:"
+                << "Skeleton::PrepareStopOffer(): Gateway-forwarded or inter-VM service - removing marker file only (S:"
                 << lola_service_id_ << " I:" << lola_instance_id_ << ")";
             service_instance_usage_marker_file_.value().TakeOwnership();
             service_instance_usage_lock.unlock();

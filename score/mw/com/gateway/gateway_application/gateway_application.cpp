@@ -134,6 +134,7 @@ void GatewayApplication::OnServiceAvailabilityChanged(const std::string& specifi
     if (handles.empty())
     {
         score::mw::log::LogInfo() << "GatewayApplication: Service disappeared: " << specifier_str;
+        available_services_.erase(specifier_str);
         OnServiceUnavailable(specifier_str);
         return;
     }
@@ -143,6 +144,7 @@ void GatewayApplication::OnServiceAvailabilityChanged(const std::string& specifi
         // Proxy kept alive from a previous cycle (see OnServiceUnavailable). Re-propagate so
         // the remote gateway recreates its skeleton.
         score::mw::log::LogInfo() << "GatewayApplication: Service re-found, re-propagating: " << specifier_str;
+        available_services_.insert(specifier_str);
         PropagateService(specifier_str);
         return;
     }
@@ -157,6 +159,7 @@ void GatewayApplication::OnServiceAvailabilityChanged(const std::string& specifi
     }
 
     proxies_.emplace(specifier_str, std::move(proxy_result).value());
+    available_services_.insert(specifier_str);
     PropagateService(specifier_str);
 }
 
@@ -211,15 +214,39 @@ void GatewayApplication::PropagateService(const std::string& specifier_str)
     auto provide_result = transport_layer_->ProvideService(std::move(specifier_result).value(), std::move(elements));
     if (!provide_result.has_value())
     {
+        // The proxy is kept, so that PropagateService gets retried, when the remote gateway (re-)connects (see
+        // OnRemoteGatewayConnected()) or when the service instance gets found again.
         score::mw::log::LogError() << "GatewayApplication: ProvideService failed for " << specifier_str
-                                   << ", will retry on next discovery";
-        // Next time the service instance gets found again, proxy will get recreated and PropagateService
-        // will be retried.
-        proxies_.erase(specifier_str);
+                                   << ", will retry on reconnect or next discovery";
         return;
     }
 
     score::mw::log::LogInfo() << "GatewayApplication: Propagated service " << specifier_str;
+}
+
+void GatewayApplication::OnRemoteGatewayConnected()
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    // The remote gateway may have been restarted or may have stop-offered its forwarding skeletons on connection loss.
+    // Since the local service discovery doesn't report the (unchanged) local services again, they are re-propagated.
+    for (const auto& specifier_str : available_services_)
+    {
+        score::mw::log::LogInfo() << "GatewayApplication: Remote gateway connected, re-propagating: " << specifier_str;
+        PropagateService(specifier_str);
+    }
+}
+
+void GatewayApplication::OnRemoteGatewayDisconnected()
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    // The service instances provided via the remote gateway might not be available anymore (e.g. since the remote VM
+    // restarted). The forwarding skeletons are kept, so that they get offered again, when the remote gateway provides
+    // the service instances again after reconnecting (see ProvideService()).
+    for (auto& [specifier_str, skeleton] : skeletons_)
+    {
+        score::mw::log::LogInfo() << "GatewayApplication: Remote gateway disconnected, stop offering " << specifier_str;
+        skeleton.StopOfferService();
+    }
 }
 
 void GatewayApplication::RegisterEventReceiveHandlerCallback(score::mw::com::GenericSkeleton& skeleton,

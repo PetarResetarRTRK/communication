@@ -181,6 +181,23 @@ TEST_F(SharedMemoryResourceMiscTest, GetIdentifierOnAnonymousResourceReturnsIdSt
     ASSERT_EQ(anonymous_identifier, std::string("id: ") + std::to_string(TestValues::sharedMemoryResourceIdentifier));
 }
 
+TEST_F(SharedMemoryResourceMiscTest, LockFileOfPathWithDirectoryIsCreatedDirectlyInLockFileDirectory)
+{
+    // Given the path of a shm-object, which is shared between VMs and therefore contains a directory
+    const std::string path{"/intervm-shared-shmem/lola-ctl-0000000000000001-00016"};
+
+    // When getting the path of its lock file
+    const auto lock_file_path = SharedMemoryResourceTestAttorney::GetLockFilePath(path);
+
+    // Then the directory separators of the path are replaced, so that the lock file can be created without a directory
+    const std::string lock_file_directory{TestValues::sharedMemorySegmentLockPath,
+                                          std::string_view{TestValues::sharedMemorySegmentLockPath}.rfind('/') + 1U};
+    EXPECT_EQ(lock_file_path, lock_file_directory + "intervm-shared-shmem_lola-ctl-0000000000000001-00016_lock");
+    // and paths without directory are kept
+    EXPECT_EQ(SharedMemoryResourceTestAttorney::GetLockFilePath(TestValues::sharedMemorySegmentPath),
+              TestValues::sharedMemorySegmentLockPath);
+}
+
 TEST_F(SharedMemoryResourceMiscTest, GettingSharedPtrToSharedMemoryResourceDestructsResourceOnce)
 {
     InSequence sequence{};

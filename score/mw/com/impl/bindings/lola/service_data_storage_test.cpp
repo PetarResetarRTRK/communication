@@ -52,6 +52,7 @@ constexpr std::size_t kNumberOfServiceElements{4U};
 constexpr std::size_t kMaxSupportedAlignment{alignof(std::max_align_t)};
 
 const ElementFqId kElementFqId{1U, 1U, 1U, ServiceElementType::EVENT};
+constexpr InterVmSharedMemoryConfiguration::VmIndex kVmIndex{0U};
 
 using ::testing::Return;
 
@@ -63,6 +64,7 @@ class ServiceDataStorageFixture : public ::testing::Test
         ON_CALL(runtime_mock_guard_.runtime_mock_, GetBindingRuntime(BindingType::kLoLa))
             .WillByDefault(Return(&lola_runtime_mock_));
         ON_CALL(lola_runtime_mock_, GetPid()).WillByDefault(Return(pid_t{42}));
+        ON_CALL(lola_runtime_mock_, GetVmIndex()).WillByDefault(Return(kVmIndex));
         ON_CALL(*unistd_mock_, getuid()).WillByDefault(Return(uid_t{42}));
     }
 
@@ -96,7 +98,7 @@ TEST_F(ServiceDataStorageFixture, GetsPidFromUnistdAndStoresItOnConstruction)
     const ServiceDataStorage unit{kNumberOfServiceElements, GetMemoryResource()};
 
     // Then the ServiceDataStorage will contain the returned PID
-    EXPECT_EQ(unit.GetSkeletonPid(), pid);
+    EXPECT_EQ(unit.GetSkeletonPid(kVmIndex), pid);
 }
 
 TEST_F(ServiceDataStorageFixture, GetsUidFromRuntimAndStoresItOnConstruction)
@@ -109,7 +111,58 @@ TEST_F(ServiceDataStorageFixture, GetsUidFromRuntimAndStoresItOnConstruction)
     const ServiceDataStorage unit{kNumberOfServiceElements, GetMemoryResource()};
 
     // Then the ServiceDataStorage will contain the returned UID
-    EXPECT_EQ(unit.GetSkeletonUid(), uid);
+    EXPECT_EQ(unit.GetSkeletonUid(kVmIndex), uid);
+}
+
+TEST_F(ServiceDataStorageFixture, StoresPidAndUidOnConstructionForTheVmOfTheProcessOnly)
+{
+    // Given a process on the second VM sharing the inter-VM shared memory region
+    const pid_t pid{123};
+    const uid_t uid{456};
+    constexpr InterVmSharedMemoryConfiguration::VmIndex kSecondVmIndex{1U};
+    ON_CALL(lola_runtime_mock_, GetVmIndex()).WillByDefault(Return(kSecondVmIndex));
+    ON_CALL(lola_runtime_mock_, GetPid()).WillByDefault(Return(pid));
+    ON_CALL(*unistd_mock_, getuid()).WillByDefault(Return(uid));
+
+    // When creating a ServiceDataStorage
+    const ServiceDataStorage unit{kNumberOfServiceElements, GetMemoryResource()};
+
+    // Then the ServiceDataStorage contains the PID and UID of the process for its VM only
+    EXPECT_EQ(unit.GetSkeletonPid(kSecondVmIndex), pid);
+    EXPECT_EQ(unit.GetSkeletonUid(kSecondVmIndex), uid);
+    EXPECT_EQ(unit.GetSkeletonPid(kVmIndex), pid_t{0});
+    EXPECT_EQ(unit.GetSkeletonUid(kVmIndex), uid_t{0});
+}
+
+TEST_F(ServiceDataStorageFixture, UpdatingPidAndUidOfOneVmKeepsTheOnesOfTheOtherVm)
+{
+    // Given a ServiceDataStorage created by a process on the first VM
+    ServiceDataStorage unit{kNumberOfServiceElements, GetMemoryResource()};
+
+    // When the forwarding skeleton on the second VM updates the PID and UID of its VM
+    constexpr InterVmSharedMemoryConfiguration::VmIndex kSecondVmIndex{1U};
+    unit.UpdateSkeletonPid(kSecondVmIndex, pid_t{123});
+    unit.UpdateSkeletonUid(kSecondVmIndex, uid_t{456});
+
+    // Then the PID and UID of the first VM are kept
+    EXPECT_EQ(unit.GetSkeletonPid(kVmIndex), pid_t{42});
+    EXPECT_EQ(unit.GetSkeletonUid(kVmIndex), uid_t{42});
+    EXPECT_EQ(unit.GetSkeletonPid(kSecondVmIndex), pid_t{123});
+    EXPECT_EQ(unit.GetSkeletonUid(kSecondVmIndex), uid_t{456});
+}
+
+TEST_F(ServiceDataStorageFixture, AccessingPidOrUidOfAnInvalidVmIndexTerminates)
+{
+    ServiceDataStorage unit{kNumberOfServiceElements, GetMemoryResource()};
+    constexpr auto kInvalidVmIndex =
+        static_cast<InterVmSharedMemoryConfiguration::VmIndex>(InterVmSharedMemoryConfiguration::kMaxNumberOfVms);
+
+    // When accessing the PID or UID of an invalid VM index
+    // Then the program terminates
+    EXPECT_DEATH(score::cpp::ignore = unit.GetSkeletonPid(kInvalidVmIndex), ".*");
+    EXPECT_DEATH(score::cpp::ignore = unit.GetSkeletonUid(kInvalidVmIndex), ".*");
+    EXPECT_DEATH(unit.UpdateSkeletonPid(kInvalidVmIndex, pid_t{1}), ".*");
+    EXPECT_DEATH(unit.UpdateSkeletonUid(kInvalidVmIndex, uid_t{1}), ".*");
 }
 
 TEST_F(ServiceDataStorageFixture, GenericProxyEventMetaInfoIsStoredInServiceDataStorage)

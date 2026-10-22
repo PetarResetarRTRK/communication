@@ -50,6 +50,10 @@ class IRuntime : public impl::IBindingRuntime
     /// \brief We need our Application ID in several locations/frequently. So the runtime shall provide/cache it.
     virtual GlobalConfiguration::ApplicationId GetApplicationId() const noexcept = 0;
 
+    /// \brief Index of the VM of this process, by which the providers on the VMs sharing a region are distinguished
+    ///        within the shared shm-objects (see InterVmSharedMemoryConfiguration). 0, if no region is configured.
+    virtual InterVmSharedMemoryConfiguration::VmIndex GetVmIndex() const noexcept = 0;
+
   protected:
     IRuntime(IRuntime&&) noexcept = default;
     IRuntime& operator=(IRuntime&&) noexcept = default;

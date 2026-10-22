@@ -13,10 +13,6 @@
 #include "score/mw/com/gateway/transport_layer/sample/sample_hypervisor_transport.h"
 
 #include "score/mw/com/gateway/transport_layer/sample/messages/gateway_messages.h"
-#include "score/mw/com/impl/configuration/lola_service_instance_deployment.h"
-#include "score/mw/com/impl/configuration/lola_service_type_deployment.h"
-#include "score/mw/com/impl/instance_identifier.h"
-#include "score/mw/com/impl/runtime.h"
 #include "score/mw/log/logging.h"
 
 #include <cstdint>
@@ -24,52 +20,6 @@
 
 namespace score::mw::com::gateway
 {
-
-ShmPaths ResolveShmPaths(const score::mw::com::InstanceSpecifier& specifier)
-{
-    auto& runtime = impl::Runtime::getInstance();
-    auto identifiers = runtime.resolve(specifier);
-    if (identifiers.empty())
-    {
-        return {};
-    }
-    impl::InstanceIdentifierView view{identifiers.front()};
-    const auto* lola_type =
-        std::get_if<impl::LolaServiceTypeDeployment>(&view.GetServiceTypeDeployment().binding_info_);
-    const auto* lola_instance =
-        std::get_if<impl::LolaServiceInstanceDeployment>(&view.GetServiceInstanceDeployment().bindingInfo_);
-
-    if (lola_type == nullptr || lola_instance == nullptr || !lola_instance->instance_id_.has_value())
-    {
-        return {};
-    }
-    // TODO Implement a ShmPathBuilder for your specific hypervisor shared memory technology that provides the according
-    // path names.
-    // LCOV_EXCL_START This code is not yet implemented so its not yet covered by tests
-    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(
-        false, "Missing implementation of ShmPathBuilder for LoLa Hypervisor gateway.");
-    // LCOV_EXCL_STOP
-    return {};
-}
-
-ShmSizes GetShmSizes(const score::mw::com::InstanceSpecifier& specifier)
-{
-    auto paths = ResolveShmPaths(specifier);
-    if (paths.control.empty())
-    {
-        ::score::mw::log::LogError() << "GetShmSizes: failed to resolve SHM paths for " << specifier.ToString();
-        return {0U, 0U};
-    }
-
-    // LCOV_EXCL_START This code is not yet implemented so its not yet covered by tests
-    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(
-        false, "Missing specific implementation of LoLa hypervisor gateway SHM size calculation.");
-    // TODO Add an implementation that is opening the SHM paths and calculates the size of those segments. This sample
-    // implementation does not include this implementation, as it is highly specific to the used hypervisor shared
-    // memory technology.
-    // LCOV_EXCL_STOP
-    return {};
-}
 
 SampleHyperVisorTransport::SampleHyperVisorTransport(GatewayCore& gateway_app,
                                                      std::unique_ptr<IBidirectionalTransport> transport) noexcept
@@ -91,6 +41,16 @@ score::Result<void> SampleHyperVisorTransport::Setup()
 {
     message_transport_->SetMessageHandler([this](std::unique_ptr<TransportMessage> message) {
         OnMessageReceived(std::move(message));
+    });
+    message_transport_->SetConnectionStateHandler([this](const bool is_connected) {
+        if (is_connected)
+        {
+            gateway_app_.OnRemoteGatewayConnected();
+        }
+        else
+        {
+            gateway_app_.OnRemoteGatewayDisconnected();
+        }
     });
     return message_transport_->Setup();
 }
@@ -143,7 +103,6 @@ void SampleHyperVisorTransport::HandleProvideServiceRequest(std::unique_ptr<Tran
         log::LogError("LoLa") << "SampleTransport: Invalid instance specifier in ProvideServiceRequest!";
         return;
     }
-    PreCreateInterVmSharedMemory(specifier_result.value(), request.GetShmControlSize(), request.GetShmDataSize());
     const auto provide_service_result =
         gateway_app_.ProvideService(specifier_result.value(), request.GetServiceElements());
     if (!provide_service_result.has_value())
@@ -247,9 +206,9 @@ score::Result<void> SampleHyperVisorTransport::ProvideService(
     score::mw::com::InstanceSpecifier service_instance_specifier,
     std::vector<score::mw::com::EventInfo> service_elements)
 {
-    const auto shm_sizes = GetShmSizes(service_instance_specifier);
-
-    ProvideServiceRequest request{service_instance_specifier, service_elements, shm_sizes.control, shm_sizes.data};
+    // No shm sizes are sent: The destination VM finds the shm-objects of the service instance (including their sizes)
+    // within the inter-VM shared memory region.
+    ProvideServiceRequest request{service_instance_specifier, service_elements};
     return message_transport_->SendRequest(request);
 }
 
@@ -292,26 +251,6 @@ score::Result<void> SampleHyperVisorTransport::UnregisterUpdateNotification(
 {
     UnregisterNotificationRequest request{service_instance_specifier, element_type, std::move(element_name)};
     return message_transport_->SendRequest(request);
-}
-
-void SampleHyperVisorTransport::PreCreateInterVmSharedMemory(const score::mw::com::InstanceSpecifier& specifier,
-                                                             std::uint32_t /* shm_control_size */,
-                                                             std::uint32_t /* shm_data_size */)
-{
-    auto paths = ResolveShmPaths(specifier);
-    if (paths.control.empty())
-    {
-        ::score::mw::log::LogError() << "PreCreateInterVmSharedMemory: failed to resolve SHM paths for "
-                                     << specifier.ToString();
-        return;
-    }
-    // LCOV_EXCL_START This code is not yet implemented so it is not yet covered by tests
-    SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(
-        false, "Missing specific implementation of hypervisor SHM memory access.");
-    // TODO Add an implementation that is opening the SHM paths in a hypervisor gateway compatible way. This sample
-    // implementation does not include this implementation, as it is highly specific to the used hypervisor shared
-    // memory technology.
-    // LCOV_EXCL_STOP
 }
 
 }  // namespace score::mw::com::gateway

@@ -510,6 +510,37 @@
                         "SIMULATION"
                     ],
                     "default": "SIMULATION"
+                },
+                "interVmSharedMemory": {
+                    "type": "object",
+                    "title": "Inter-VM shared memory region",
+                    "description": "Shared memory region provided by the hypervisor, in which the shm-objects of all service instances with interVmSupport are placed, so that they are shared between VMs. If this property is NOT defined, shm-objects of service instances with interVmSupport can only be created/opened by processes, which install their own inter-VM memory provider.",
+                    "required": [
+                        "regionPath",
+                        "regionSize"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                        "regionPath": {
+                            "type": "string",
+                            "title": "Region path",
+                            "description": "Path of the file, which gives access to the region on this VM and supports mmap() with offsets, e.g. the POSIX shm-object of the region on the hypervisor host (/dev/shmem/<name> on QNX) or the device node of the driver of the shared memory device within a guest."
+                        },
+                        "regionSize": {
+                            "type": "integer",
+                            "title": "Region size",
+                            "description": "Size of the region in bytes. It has to be the same on all VMs.",
+                            "minimum": 1
+                        },
+                        "vmIndex": {
+                            "type": "integer",
+                            "title": "VM index",
+                            "description": "Index of this VM. Each VM sharing the region needs a distinct one, so that the providers on each VM can be identified within the shared shm-objects.",
+                            "default": 0,
+                            "minimum": 0,
+                            "maximum": 1
+                        }
+                    }
                 }
             }
         },

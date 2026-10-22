@@ -34,6 +34,8 @@ const std::uint64_t kDataMemoryResourceId{std::numeric_limits<std::uint64_t>::ma
 // Fixed capacity used for the fixed-capacity containers within the fake ServiceDataStorage. Test-doubles add their
 // events dynamically, so we simply reserve a generous upper bound.
 constexpr std::size_t kMaxNumberOfServiceElements{100U};
+// Tests run within a single VM, so the pid/uid of the fake skeleton are stored for the default VM index.
+constexpr InterVmSharedMemoryConfiguration::VmIndex kVmIndex{0U};
 
 }  // namespace
 
@@ -48,8 +50,8 @@ FakeMockedServiceData::FakeMockedServiceData(const pid_t skeleton_process_pid_in
     data_storage =
         data_memory_resource->construct<ServiceDataStorage>(kMaxNumberOfServiceElements, *data_memory_resource);
 
-    data_storage->UpdateSkeletonPid(skeleton_process_pid_in);
-    data_storage->UpdateSkeletonUid(skeleton_uid_in);
+    data_storage->UpdateSkeletonPid(kVmIndex, skeleton_process_pid_in);
+    data_storage->UpdateSkeletonUid(kVmIndex, skeleton_uid_in);
 }
 
 }  // namespace score::mw::com::impl::lola

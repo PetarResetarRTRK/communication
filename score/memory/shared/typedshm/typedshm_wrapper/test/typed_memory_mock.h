@@ -27,6 +27,10 @@ namespace score::memory::shared
 class TypedMemoryMock : public score::memory::shared::TypedMemory
 {
   public:
+    /// \brief By default, the mock doesn't place shm-objects into a shared memory region, like the production typed
+    ///        memory.
+    TypedMemoryMock();
+
     MOCK_METHOD(score::cpp::expected_blank<score::os::Error>,
                 AllocateNamedTypedMemory,
                 (const size_t shm_size, const std::string shm_name, (const permission::UserPermissions& permissions)),
@@ -44,6 +48,16 @@ class TypedMemoryMock : public score::memory::shared::TypedMemory
 
     MOCK_METHOD((score::cpp::expected<uid_t, score::os::Error>),
                 GetCreatorUid,
+                (std::string_view shm_name),
+                (const, noexcept, override));
+
+    MOCK_METHOD((score::cpp::expected<RegionObject, score::os::Error>),
+                CreateNamedRegionObject,
+                (std::string_view shm_name, const std::size_t shm_size),
+                (const, noexcept, override));
+
+    MOCK_METHOD((score::cpp::expected<RegionObject, score::os::Error>),
+                OpenNamedRegionObject,
                 (std::string_view shm_name),
                 (const, noexcept, override));
 };

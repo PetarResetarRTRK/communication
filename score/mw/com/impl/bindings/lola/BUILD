@@ -124,7 +124,9 @@ cc_library(
     hdrs = ["runtime.h"],
     features = COMPILER_WARNING_FEATURES,
     implementation_deps = [
+        "//score/memory/shared",
         "//score/memory/shared:offset_ptr",
+        "//score/memory/shared/intervm:shared_memory_region",
         "@score_baselibs//score/mw/log",
         "@score_baselibs//score/os:unistd",
     ],
@@ -347,6 +349,7 @@ cc_library(
         "@score_baselibs//score/language/safecpp/safe_math",
         "@score_baselibs//score/language/safecpp/scoped_function:scope",
         "@score_baselibs//score/memory:data_type_size_info",
+        "@score_baselibs//score/os:unistd",
         "@score_baselibs//score/result",
     ],
 )
@@ -1265,9 +1268,15 @@ cc_unit_test(
     features = COMPILER_WARNING_FEATURES,
     deps = [
         ":runtime",
+        "//score/memory/shared",
+        "//score/memory/shared/intervm:shared_memory_region",
         # TODO: Change for mock once it provides all symbols (see https://github.com/eclipse-score/baselibs/issues/198)
         "@score_baselibs//score/analysis/tracing/generic_trace_library:implementation",
         "@score_baselibs//score/concurrency:long_running_threads_container",
+        "@score_baselibs//score/os:fcntl",
+        "@score_baselibs//score/os:mman",
+        "@score_baselibs//score/os:stat",
+        "@score_baselibs//score/os:unistd",
         "@score_baselibs//score/os/mocklib:unistd_mock",
     ],
 )

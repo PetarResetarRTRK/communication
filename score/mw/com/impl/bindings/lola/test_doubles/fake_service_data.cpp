@@ -25,6 +25,8 @@ namespace
 // Fixed capacity used for the fixed-capacity containers within the fake ServiceDataStorage. Test-doubles add their
 // events dynamically, so we simply reserve a generous upper bound.
 constexpr std::size_t kMaxNumberOfServiceElements{100U};
+// Tests run within a single VM, so the pid/uid of the fake skeleton are stored for the default VM index.
+constexpr InterVmSharedMemoryConfiguration::VmIndex kVmIndex{0U};
 }  // namespace
 
 std::unique_ptr<FakeServiceData> FakeServiceData::Create(const std::string& control_file_name,
@@ -94,8 +96,8 @@ FakeServiceData::FakeServiceData(const std::string& control_file_name,
             {
                 data_storage =
                     memory_resource->construct<ServiceDataStorage>(kMaxNumberOfServiceElements, *memory_resource);
-                data_storage->UpdateSkeletonPid(skeleton_process_pid_in);
-                data_storage->UpdateSkeletonUid(skeleton_uid_in);
+                data_storage->UpdateSkeletonPid(kVmIndex, skeleton_process_pid_in);
+                data_storage->UpdateSkeletonUid(kVmIndex, skeleton_uid_in);
             }
         },
         65535U);

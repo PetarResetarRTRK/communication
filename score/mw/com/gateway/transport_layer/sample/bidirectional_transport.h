@@ -71,7 +71,23 @@ class BidirectionalTransport : public IBidirectionalTransport
     /// \param handler The callback to handle incoming messages.
     void SetMessageHandler(MessageHandler handler) override;
 
+    /// \brief Set a callback that will be informed about changes of the connection state. Disconnects caused by
+    /// Shutdown() are not reported.
+    void SetConnectionStateHandler(ConnectionStateHandler handler) override;
+
   private:
+    /// \brief Item of the dispatch queue: a received message or a change of the connection state.
+    struct DispatchItem
+    {
+        /// \brief The received message, or nullptr for a change of the connection state.
+        std::unique_ptr<TransportMessage> message;
+        /// \brief The new connection state, only relevant if message is nullptr.
+        bool is_connected;
+    };
+
+    /// \brief Queues the change of the connection state for the dispatch thread, if a handler has been set.
+    void DispatchConnectionStateChange(const bool is_connected);
+
     /// \brief Send the given message and wait for the ACK response with the same sequence number.
     /// Returns error if unknown sequence number, timeout ocurres or disconnect happens.
     score::Result<void> TrySendAndWaitForAck(TransportMessage& message, const std::uint32_t sequence);
@@ -110,11 +126,13 @@ class BidirectionalTransport : public IBidirectionalTransport
 
     MessageHandler message_handler_;
     bool has_message_handler_{false};
+    ConnectionStateHandler connection_state_handler_;
+    bool has_connection_state_handler_{false};
 
     // Dispatch queue: incoming non-ACK messages are pushed here by the receive loop and
     // processed by a dedicated dispatch thread. This decouples the receive loop from the
     // message handler, so the handler can call SendRequest() without blocking ACK reception.
-    std::queue<std::unique_ptr<TransportMessage>> dispatch_queue_;
+    std::queue<DispatchItem> dispatch_queue_;
     std::mutex dispatch_mutex_;
     std::condition_variable dispatch_cv_;
     std::atomic<bool> dispatch_shutdown_{false};

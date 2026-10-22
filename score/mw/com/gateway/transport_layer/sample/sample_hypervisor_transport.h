@@ -34,10 +34,13 @@ struct ShmSizes
     std::uint32_t data;
 };
 
-ShmPaths ResolveShmPaths(const score::mw::com::InstanceSpecifier& specifier);
-
-ShmSizes GetShmSizes(const score::mw::com::InstanceSpecifier& specifier);
-
+/// \brief Transport layer, which exchanges the messages between the gateways via the BidirectionalTransport (POSIX
+///        sockets).
+/// \details It supports memory sharing: The shm-objects of service instances with interVmSupport are placed into the
+///          inter-VM shared memory region by the inter-VM memory provider of every process on both VMs (see
+///          score/memory/shared/intervm and global/interVmSharedMemory in the mw::com configuration). So the
+///          shm-objects created on the source VM are already accessible on the destination VM and the transport layer
+///          doesn't have to make them accessible itself.
 class SampleHyperVisorTransport : public Transport
 {
   public:
@@ -85,16 +88,9 @@ class SampleHyperVisorTransport : public Transport
     void HandleUnregisterNotificationRequest(std::unique_ptr<TransportMessage> message);
     /// \brief Internal callback for incoming messages from the transport.
     /// \details inspects the received message and dispatches it to related API calls of the gateway application
-    /// (e.g. ProvideService, NotifyUpdate, etc.). In some cases it does a message specific processing before calling
-    /// the gateway application API (e.g. for ProvideServiceRequest, it creates the shared memory segments for the
-    /// service instance before calling ProvideService).
+    /// (e.g. ProvideService, NotifyUpdate, etc.).
     /// @param message received message from the BidirectionalTransport (transport_ member variable)
     void OnMessageReceived(std::unique_ptr<TransportMessage> message);
-    /// \brief Creates the shared memory region based on the given arguments, prior to the gateway application accessing
-    /// the shared memory region, i.e. before ProvideService() has been called.
-    void PreCreateInterVmSharedMemory(const score::mw::com::InstanceSpecifier& specifier,
-                                      std::uint32_t shm_control_size,
-                                      std::uint32_t shm_data_size);
 
     GatewayCore& gateway_app_;
     std::unique_ptr<IBidirectionalTransport> message_transport_;

@@ -19,13 +19,17 @@
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <score/utility.hpp>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 namespace score::mw::com::gateway
 {
@@ -43,6 +47,32 @@ MessageHeader CreateMessageHeader(MessageType type, std::uint32_t sequence = 0U,
     header.payload_size = payload_size;
     return header;
 }
+
+/// \brief Records the connection states reported to a ConnectionStateHandler.
+class ConnectionStateRecorder
+{
+  public:
+    void Record(const bool is_connected)
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        states_.push_back(is_connected);
+        condition_variable_.notify_all();
+    }
+
+    std::vector<bool> WaitForStates(const std::size_t number_of_states, const std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock{mutex_};
+        score::cpp::ignore = condition_variable_.wait_for(lock, timeout, [this, number_of_states]() {
+            return states_.size() >= number_of_states;
+        });
+        return states_;
+    }
+
+  private:
+    std::mutex mutex_;
+    std::condition_variable condition_variable_;
+    std::vector<bool> states_;
+};
 
 }  // namespace
 
@@ -786,6 +816,45 @@ TEST_F(BidirectionalTransportSocketFixture, MissingMessageHandlerCallbackIsAllow
     EXPECT_TRUE(transport_->IsConnected());
 
     allow_disconnect->store(true, std::memory_order_relaxed);
+    transport_->Shutdown();
+    transport_.reset();
+}
+
+TEST_F(BidirectionalTransportSocketFixture, ConnectionAndLostConnectionAreReportedToConnectionStateHandler)
+{
+    // Given a transport with connected sockets, whose connection gets closed by the remote side on request
+    CreateTransport().WithASocketSetupThatIsConnectedAndHasAccepted();
+    std::shared_ptr<std::atomic<bool>> allow_disconnect{new std::atomic<bool>{false}};
+    EXPECT_CALL(socket_mock_, recv(kReceiveFd, _, MessageHeader::kWireSize, _))
+        .WillOnce(Invoke([allow_disconnect](
+                             auto, void*, const std::size_t, auto) -> score::cpp::expected<ssize_t, score::os::Error> {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+            while (!allow_disconnect->load() && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return static_cast<ssize_t>(0);
+        }));
+
+    // and a connection state handler
+    ConnectionStateRecorder recorder{};
+    transport_->SetMessageHandler([](std::unique_ptr<TransportMessage>) {});
+    transport_->SetConnectionStateHandler([&recorder](const bool is_connected) {
+        recorder.Record(is_connected);
+    });
+
+    // When the connection is established
+    ASSERT_TRUE(transport_->Setup().has_value());
+
+    // Then the established connection is reported
+    EXPECT_EQ(recorder.WaitForStates(1U, std::chrono::milliseconds(500)), std::vector<bool>{true});
+
+    // and when the remote side closes the connection
+    allow_disconnect->store(true);
+
+    // Then the lost connection is reported
+    EXPECT_EQ(recorder.WaitForStates(2U, std::chrono::milliseconds(500)), (std::vector<bool>{true, false}));
+
     transport_->Shutdown();
     transport_.reset();
 }

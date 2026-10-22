@@ -46,6 +46,8 @@ class RuntimeMock : public IRuntime
     MOCK_METHOD(pid_t, GetPid, (), (const, noexcept, override));
     // coverity[autosar_cpp14_m3_9_1_violation]
     MOCK_METHOD(GlobalConfiguration::ApplicationId, GetApplicationId, (), (const, noexcept, override));
+    // coverity[autosar_cpp14_m3_9_1_violation]
+    MOCK_METHOD(InterVmSharedMemoryConfiguration::VmIndex, GetVmIndex, (), (const, noexcept, override));
 };
 
 }  // namespace score::mw::com::impl::lola

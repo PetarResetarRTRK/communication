@@ -12,7 +12,9 @@
  ********************************************************************************/
 #include "score/mw/com/impl/bindings/lola/runtime.h"
 
+#include "score/memory/shared/intervm/shared_memory_region.h"
 #include "score/memory/shared/offset_ptr.h"
+#include "score/memory/shared/shared_memory_factory.h"
 #include "score/mw/log/logging.h"
 #include "score/os/unistd.h"
 
@@ -74,11 +76,22 @@ Runtime::Runtime(const Configuration& config,
       tracing_runtime_{std::move(lola_tracing_runtime)},
       rollback_data_{},
       pid_{os::Unistd::instance().getpid()},
-      application_id_{DetermineApplicationIdentifier(config)}
+      application_id_{DetermineApplicationIdentifier(config)},
+      vm_index_{0U}
 {
     // At this stage we know/can decide, whether we are an ASIL-B or ASIL-QM application. OffsetPtr bounds-checking
     // is costly and is only done in case we are an ASIL-B app!
     score::cpp::ignore = score::memory::shared::EnableOffsetPtrBoundsChecking(Runtime::HasAsilBSupport());
+
+    // The shm-objects of service instances with interVmSupport are placed into the region shared between VMs.
+    const auto& inter_vm_shared_memory = config.GetGlobalConfiguration().GetInterVmSharedMemory();
+    if (inter_vm_shared_memory.has_value())
+    {
+        vm_index_ = inter_vm_shared_memory.value().vm_index;
+        score::memory::shared::SharedMemoryFactory::SetInterVMMemoryProvider(
+            std::make_shared<score::memory::shared::SharedMemoryRegion>(inter_vm_shared_memory.value().region_path,
+                                                                        inter_vm_shared_memory.value().region_size));
+    }
 }
 
 BindingType Runtime::GetBindingType() const noexcept
@@ -162,6 +175,11 @@ pid_t Runtime::GetPid() const noexcept
 GlobalConfiguration::ApplicationId Runtime::GetApplicationId() const noexcept
 {
     return application_id_;
+}
+
+InterVmSharedMemoryConfiguration::VmIndex Runtime::GetVmIndex() const noexcept
+{
+    return vm_index_;
 }
 
 }  // namespace score::mw::com::impl::lola

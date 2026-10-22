@@ -114,6 +114,7 @@ class LolaRuntimeMock : public IRuntime
     MOCK_METHOD(RollbackSynchronization&, GetRollbackSynchronization, (), (ref(&), noexcept, override));
     MOCK_METHOD(pid_t, GetPid, (), (const, noexcept, override));
     MOCK_METHOD(std::uint32_t, GetApplicationId, (), (const, noexcept, override));
+    MOCK_METHOD(InterVmSharedMemoryConfiguration::VmIndex, GetVmIndex, (), (const, noexcept, override));
 
   private:
     MessagePassingPtr<IMessagePassingService> message_passing_service_{};

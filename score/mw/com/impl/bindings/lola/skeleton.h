@@ -166,7 +166,8 @@ class Skeleton final : public SkeletonBinding
         kUnknownStrategy = 0U,
         kOpenGatewayForwardedShm,
         kRecreateShm,
-        kReuseExistingShm
+        kReuseExistingShm,
+        kReuseOrCreateInterVmShm
     };
 
     /// \brief Strategies for handling shared memory during PrepareStopOffer
@@ -194,6 +195,15 @@ class Skeleton final : public SkeletonBinding
     bool IsGatewayForwardedSkeleton() const noexcept
     {
         return lola_service_instance_deployment_.inter_vm_forwarded_;
+    }
+
+    /// \brief Checks if this skeleton creates its SHM in inter-VM shared memory, so that it can be shared with another
+    /// VM (e.g. by a gateway)
+    /// \return true if this skeleton owns inter-VM SHM, which might be used by proxies on another VM
+    bool CreatesInterVmShm() const noexcept
+    {
+        return lola_service_instance_deployment_.inter_vm_support_ &&
+               (!lola_service_instance_deployment_.inter_vm_forwarded_);
     }
 
     Result<void> OnServiceMethodsSubscribed(const ProxyInstanceIdentifier& proxy_instance_identifier,

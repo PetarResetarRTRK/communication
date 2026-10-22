@@ -2730,6 +2730,100 @@ INSTANTIATE_TEST_SUITE_P(
         R"json({"serviceTypes": [], "serviceInstances": [], "global": { "applicationID": 429496729533}})json",
         R"json({"serviceTypes": [], "serviceInstances": [], "global": { "applicationID": -1}})json"));
 
+TEST(ConfigurationJsonParsingStrategy, NoInterVmSharedMemoryIsConfiguredByDefault)
+{
+    // Given a JSON without inter-VM shared memory region
+    auto json = R"({"serviceTypes": [], "serviceInstances": [], "global": {"asil-level": "B"}})"_json;
+
+    // When parsing the JSON
+    const auto config = score::mw::com::impl::configuration::ConfigurationJsonParsingStrategy{}.Parse(std::move(json));
+
+    // Then no inter-VM shared memory region is configured
+    EXPECT_FALSE(config.GetGlobalConfiguration().GetInterVmSharedMemory().has_value());
+}
+
+TEST(ConfigurationJsonParsingStrategy, ParsesInterVmSharedMemory)
+{
+    // Given a JSON with an inter-VM shared memory region
+    auto json = R"(
+  {
+    "serviceTypes": [],
+    "serviceInstances": [],
+    "global": {
+      "interVmSharedMemory": {
+        "regionPath": "/dev/shmem/lola-intervm",
+        "regionSize": 134217728,
+        "vmIndex": 1
+      }
+    }
+  }
+)"_json;
+
+    // When parsing the JSON
+    const auto config = score::mw::com::impl::configuration::ConfigurationJsonParsingStrategy{}.Parse(std::move(json));
+
+    // Then the region is configured
+    const auto& inter_vm_shared_memory = config.GetGlobalConfiguration().GetInterVmSharedMemory();
+    ASSERT_TRUE(inter_vm_shared_memory.has_value());
+    EXPECT_EQ(inter_vm_shared_memory.value().region_path, "/dev/shmem/lola-intervm");
+    EXPECT_EQ(inter_vm_shared_memory.value().region_size, 134217728U);
+    EXPECT_EQ(inter_vm_shared_memory.value().vm_index, 1U);
+}
+
+TEST(ConfigurationJsonParsingStrategy, InterVmSharedMemoryVmIndexDefaultsToZero)
+{
+    // Given a JSON with an inter-VM shared memory region without VM index
+    auto json = R"(
+  {
+    "serviceTypes": [],
+    "serviceInstances": [],
+    "global": {
+      "interVmSharedMemory": {
+        "regionPath": "/dev/qvm-shmem-lola",
+        "regionSize": 4096
+      }
+    }
+  }
+)"_json;
+
+    // When parsing the JSON
+    const auto config = score::mw::com::impl::configuration::ConfigurationJsonParsingStrategy{}.Parse(std::move(json));
+
+    // Then the VM index is 0
+    const auto& inter_vm_shared_memory = config.GetGlobalConfiguration().GetInterVmSharedMemory();
+    ASSERT_TRUE(inter_vm_shared_memory.has_value());
+    EXPECT_EQ(inter_vm_shared_memory.value().vm_index, 0U);
+}
+
+class InvalidInterVmSharedMemoryFixture : public ::testing::TestWithParam<std::string>
+{
+};
+
+TEST_P(InvalidInterVmSharedMemoryFixture, DieOnInvalidInterVmSharedMemory)
+{
+    score::json::JsonParser json_parser_obj;
+    // Given a JSON with an invalid inter-VM shared memory region
+    json::Any json{json_parser_obj.FromBuffer(GetParam()).value()};
+
+    // When parsing the JSON then it will fail with a precondition violation
+    SCORE_LANGUAGE_FUTURECPP_EXPECT_CONTRACT_VIOLATED(
+        score::cpp::ignore = Configuration{configuration::ConfigurationJsonParsingStrategy{}.Parse(std::move(json))});
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    InvalidInterVmSharedMemoryTests,
+    InvalidInterVmSharedMemoryFixture,
+    ::testing::Values(
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": 5}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionSize": 4096}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": "", "regionSize": 4096}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": 7, "regionSize": 4096}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": "/r"}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": "/r", "regionSize": 0}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": "/r", "regionSize": -1}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": "/r", "regionSize": 4096, "vmIndex": 2}}})json",
+        R"json({"serviceTypes": [], "serviceInstances": [], "global": { "interVmSharedMemory": {"regionPath": "/r", "regionSize": 4096, "vmIndex": -1}}})json"));
+
 TEST(ConfigurationJsonParsingStrategy, OnlyQmReceiverQueueSizes)
 {
     // Given a JSON with only QM-receiver queue size being explicitly configured

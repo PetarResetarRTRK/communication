@@ -70,7 +70,7 @@ class BidirectionalTransportAttorney
     {
         {
             std::lock_guard<std::mutex> lock(transport_->dispatch_mutex_);
-            transport_->dispatch_queue_.push(std::move(message));
+            transport_->dispatch_queue_.push(BidirectionalTransport::DispatchItem{std::move(message), false});
         }
         transport_->dispatch_cv_.notify_one();
     }

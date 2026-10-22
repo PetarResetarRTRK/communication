@@ -36,6 +36,7 @@
 #include "score/memory/shared/shared_memory_factory.h"
 #include "score/mw/log/logging.h"
 #include "score/os/acl.h"
+#include "score/os/unistd.h"
 #include "score/result/result.h"
 
 #include <score/assert.hpp>
@@ -720,11 +721,14 @@ bool SkeletonMemoryManager::OpenSharedMemoryForData(
     const auto& memory_resource_ref = *memory_resource.get();
     storage_ = GetServiceDataStorageSkeletonSide(memory_resource_ref);
 
-    // Our pid will have changed after re-start and we now have to update it in the re-opened DATA section.
-    const auto pid = GetBindingRuntime<lola::IRuntime>(BindingType::kLoLa).GetPid();
+    // Our pid will have changed after re-start and we now have to update it in the re-opened DATA section. A
+    // gateway's forwarding skeleton opens a DATA section created on another VM, so it updates the pid/uid of its VM.
+    const auto& lola_runtime = GetBindingRuntime<lola::IRuntime>(BindingType::kLoLa);
+    const auto pid = lola_runtime.GetPid();
     score::mw::log::LogDebug("lola") << "Updating PID of Skeleton (S: " << lola_service_id_
                                      << " I:" << lola_instance_id_ << ") with:" << pid;
-    storage_->UpdateSkeletonPid(pid);
+    storage_->UpdateSkeletonPid(lola_runtime.GetVmIndex(), pid);
+    storage_->UpdateSkeletonUid(lola_runtime.GetVmIndex(), os::Unistd::instance().getuid());
 
     if (register_shm_object_trace_callback.has_value() && memory_resource->IsShmInTypedMemory())
     {

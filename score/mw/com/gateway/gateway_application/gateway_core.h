@@ -89,6 +89,20 @@ class GatewayCore
     virtual score::Result<void> NotifyUpdate(score::mw::com::InstanceSpecifier service_instance_specifier,
                                              impl::ServiceElementType updated_element_type,
                                              std::string updated_element_name) = 0;
+
+    /// \brief Informs the gateway application, that the connection to the remote gateway has been (re-)established.
+    /// \details The remote gateway may have been restarted, or may have stop-offered its forwarding skeletons, when it
+    /// lost the connection (see OnRemoteGatewayDisconnected()). So the gateway application re-propagates its currently
+    /// available local service instances. Transport layer implementations, which don't report the connection state,
+    /// don't call it.
+    virtual void OnRemoteGatewayConnected() {}
+
+    /// \brief Informs the gateway application, that the connection to the remote gateway has been lost.
+    /// \details The service instances provided via the remote gateway might not be available anymore (e.g. since the
+    /// remote VM restarted). So the gateway application stop-offers its forwarding skeletons, until the remote gateway
+    /// provides the service instances again after reconnecting. Transport layer implementations, which don't report the
+    /// connection state, don't call it.
+    virtual void OnRemoteGatewayDisconnected() {}
 };
 
 }  // namespace score::mw::com::gateway

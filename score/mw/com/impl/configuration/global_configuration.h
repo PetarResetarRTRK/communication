@@ -18,11 +18,32 @@
 
 #include <sys/types.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <utility>
 
 namespace score::mw::com::impl
 {
+
+/// \brief Configuration of the shared memory region, in which the shm-objects of all service instances with
+///        interVmSupport are placed, so that they are shared between VMs.
+struct InterVmSharedMemoryConfiguration
+{
+    /// \brief Index of a VM sharing the region.
+    using VmIndex = std::uint8_t;
+
+    /// \brief Maximum number of VMs, which share a region.
+    static constexpr std::size_t kMaxNumberOfVms{2U};
+
+    /// \brief Path of the file, which gives access to the region on this VM.
+    std::string region_path;
+    /// \brief Size of the region in bytes. It has to be the same on all VMs.
+    std::uint64_t region_size;
+    /// \brief Index of this VM. Each VM sharing the region needs a distinct one (smaller than kMaxNumberOfVms).
+    VmIndex vm_index;
+};
 
 class GlobalConfiguration final
 {
@@ -93,6 +114,17 @@ class GlobalConfiguration final
         return shm_size_calc_mode_;
     }
 
+    void SetInterVmSharedMemory(InterVmSharedMemoryConfiguration inter_vm_shared_memory) noexcept
+    {
+        inter_vm_shared_memory_ = std::move(inter_vm_shared_memory);
+    }
+
+    /// \brief Returns the configuration of the shared memory region shared between VMs, if there is one.
+    const std::optional<InterVmSharedMemoryConfiguration>& GetInterVmSharedMemory() const noexcept
+    {
+        return inter_vm_shared_memory_;
+    }
+
   private:
     /// properties/settings from the "global" section
     QualityType process_asil_level_;
@@ -103,6 +135,8 @@ class GlobalConfiguration final
     std::int32_t message_tx_queue_size_b;
 
     ShmSizeCalculationMode shm_size_calc_mode_;
+
+    std::optional<InterVmSharedMemoryConfiguration> inter_vm_shared_memory_;
 };
 
 }  // namespace score::mw::com::impl

@@ -30,14 +30,16 @@ environments, we decided to add this as a sample implementation.
 
 ## Vendor-specific implementation details
 
-Our sample Transport Layer implementation returns `true` for an API call of `IsMemorySharingSupported`. So it is a sample for a `Gateway Transport Layer` 
-for an inter-VM setup, where memory sharing between VMs is possible.
-It can not fully implement the second part (see above) with regard to making shared-memory objects visible/accessible 
-between gateway domains (VMs) as this is vendor/hypervisor/OS specific. Thus, there are TODOs in the code.
+Our sample Transport Layer implementation returns `true` for an API call of `IsMemorySharingSupported`. So it is a
+sample for a `Gateway Transport Layer` for an inter-VM setup, where memory sharing between VMs is possible.
 
-However, the basic assumption in this sample implementation is:
+The second part (see above), i.e. making shared-memory objects visible/accessible between gateway domains (VMs), is not
+done by the Transport Layer: The hypervisor provides a shared memory region, into which every process on both VMs
+places the shm-objects of service instances with `interVmSupport` (see
+[score/memory/shared/intervm](../../../../../memory/shared/intervm/README.md) and
+[Memory Sharing via an Inter-VM Shared Memory Region](../../README.md#memory-sharing-via-an-inter-vm-shared-memory-region)).
+So the shm-objects created on the source side are already accessible on the destination side, and the `ProvideService`
+request doesn't carry the sizes of the shm-objects.
 
-- in the `ProvideService` request, the destination Transport Layer receives from the source side, there is an 
-`InstanceSpecifier` and the sizes of the control/data shm-objects.
-- from the `InstanceSpecifier` the Transport Layer can deduce the identification of the shared-memory objects created on the source side.
-- it can verify, whether the shm-object sizes communicated in the request match with the shm-objects it opened.
+The Transport Layer reports changes of its connection state to the gateway application (see
+[Remote Gateway Connection](../../README.md#remote-gateway-connection)).

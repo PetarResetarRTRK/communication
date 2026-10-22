@@ -26,7 +26,7 @@ This README describes the implementation details specific to this codebase.
 | [transport_layer/transport.h](transport_layer/transport.h) | `Transport` abstract base class — called by `GatewayApplication` to send cross-domain requests. |
 | [transport_layer/transport_factory.h](transport_layer/transport_factory.h) | Creates the correct `Transport` implementation from configuration. |
 | [transport_layer/transport_mock.h](transport_layer/transport_mock.h) | GMock of `Transport` used in unit tests. |
-| [transport_layer/sample/](transport_layer/sample/) | Sample transport layer implementation: relies on shared memory in a hypervisor system and uses TCP sockets for side-channel communication. |
+| [transport_layer/sample/](transport_layer/sample/) | Sample transport layer implementation: relies on the inter-VM shared memory region of a hypervisor system (see [Memory Sharing via an Inter-VM Shared Memory Region](#memory-sharing-via-an-inter-vm-shared-memory-region)) and uses TCP sockets for side-channel communication. |
 
 ## Architecture
 
@@ -63,6 +63,34 @@ registrations. `GatewayApplication` implements this interface.
 |---|---|---|
 | **Copying Gateway** | `Transport::IsMemorySharingSupported()` returns `false` | Copies event data between domains via the transport layer. |
 | **MemorySharing Gateway** | `Transport::IsMemorySharingSupported()` returns `true` | Shares the source domain's memory objects directly with the destination domain, avoiding data copying. |
+
+### Memory Sharing via an Inter-VM Shared Memory Region
+
+In a hypervisor system, the VMs can share a single shared memory region, which the hypervisor provides (e.g. a region
+of the QNX hypervisor's `vdev shmem`). All shm-objects of service instances configured with `interVmSupport` are then
+placed into this region (see [score/memory/shared/intervm](../../../memory/shared/intervm/README.md)) — by every process on
+both VMs, which is configured with `global/interVmSharedMemory` in its `mw_com_config.json` (see the
+[mw::com configuration](../impl/configuration/README.md#intervmsharedmemory)). So providers and consumers in different
+domains use the very same shm-objects, in both directions, without any copy:
+
+- **Source side:** The provider's skeleton creates its control and data segments within the region. The source
+  gateway's `GenericProxy` uses them as any other local consumer.
+- **Destination side:** The destination gateway's `GenericSkeleton` (Forwarding Skeleton) is configured with
+  `interVmSupport` and `interVmForwarded`, so it opens the existing segments instead of creating them. Local consumers
+  find and read them in the region as well. Subscriptions are written into the shared control segment, so the provider
+  sees them directly.
+- **Gateways:** Only the `mw::com` messages cross the domain boundary via the transport layer (offers, registrations of
+  event receive handlers and data-less update notifications, see [Detailed Sequences](#detailed-sequences)). The
+  transport layer doesn't have to make shm-objects accessible itself.
+
+Configuration rules:
+
+- Both domains configure the service instance with the same service ID, instance ID, `asilLevel`, number of sample
+  slots and maximum number of subscribers, since they determine the names and the layout of the shared shm-objects.
+  Subscribers of both domains count against `maxSubscribers` and `numberOfSampleSlots`.
+- The provider's domain configures the instance with `interVmSupport`. The destination domain configures it with
+  `interVmSupport` and `interVmForwarded`, which is used by the Forwarding Skeleton and the local consumers.
+- Each domain configures a distinct `vmIndex`, and `applicationID`s have to be unique across both domains.
 
 ## Configuration
 
@@ -157,7 +185,8 @@ Triggered when a locally provided service is discovered by the Source Gateway.
     the source gateway.
 12. The result of `ProvideService()` is returned from the destination gateway back to the source gateway.
 13. On the source side, on success, `GatewayApplication` calls `Transport::OfferService()`. On failure, it logs
-    the error and removes the proxy — the service will be retried on the next `FindServiceHandler` invocation.
+    the error and keeps the proxy — the service will be retried when the remote gateway (re-)connects (see
+    [Remote Gateway Connection](#remote-gateway-connection)) or on the next `FindServiceHandler` invocation.
 14. The `OfferService` message is forwarded to the destination gateway.
 15. On the destination side, `GatewayApplication` calls `GenericSkeleton::OfferService()`, making the forwarded
     service visible to local consumers.
@@ -227,3 +256,19 @@ Triggered when the source gateway detects new event data and the destination sid
 5. On the destination side, `GatewayApplication` calls `GenericSkeletonEvent::Notify()` on the corresponding
    event of the `Forwarding Skeleton`, which triggers the message-passing update notification to all local
    consumers.
+
+---
+
+### Remote Gateway Connection
+
+Triggered when a transport layer, which reports its connection state (e.g. the sample transport layer), (re-)establishes
+or loses the connection to the remote gateway.
+
+1. When the connection is lost, the transport layer calls `GatewayCore::OnRemoteGatewayDisconnected()`. The service
+   instances provided via the remote gateway might not be available anymore (e.g. since the remote VM restarted), so
+   `GatewayApplication` stop-offers all its `Forwarding Skeleton`s. They are kept and offered again, when the remote
+   gateway provides the service instances again (see step 9 of [Service Provision](#service-provision)).
+2. When the connection is (re-)established, the transport layer calls `GatewayCore::OnRemoteGatewayConnected()`. The
+   remote gateway may have been restarted or may have stop-offered its `Forwarding Skeleton`s, so
+   `GatewayApplication` re-propagates all forwarded service instances, which are currently available locally (see
+   [Service Provision](#service-provision), step 3 onwards).

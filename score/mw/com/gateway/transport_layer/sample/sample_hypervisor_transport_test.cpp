@@ -16,9 +16,6 @@
 #include "score/mw/com/gateway/transport_layer/sample/bidirectional_transport_mock.h"
 #include "score/mw/com/gateway/transport_layer/transport_error.h"
 
-#include "score/mw/com/impl/runtime_mock.h"
-#include "score/mw/com/impl/test/dummy_instance_identifier_builder.h"
-#include "score/mw/com/impl/test/runtime_mock_guard.h"
 #include "score/mw/log/recorder_mock.h"
 
 #include <gtest/gtest.h>
@@ -50,6 +47,10 @@ class SampleHyperVisorTransportTest : public ::testing::Test
         EXPECT_CALL(*bi_directional_transport_mock_, SetMessageHandler(::testing::_))
             .WillOnce([this](IBidirectionalTransport::MessageHandler handler) {
                 captured_handler_ = std::move(handler);
+            });
+        EXPECT_CALL(*bi_directional_transport_mock_, SetConnectionStateHandler(::testing::_))
+            .WillOnce([this](IBidirectionalTransport::ConnectionStateHandler handler) {
+                captured_connection_state_handler_ = std::move(handler);
             });
         EXPECT_CALL(*bi_directional_transport_mock_, Setup()).WillOnce(::testing::Return(score::Result<void>{}));
         const auto setup_result = transport_->Setup();
@@ -147,6 +148,7 @@ class SampleHyperVisorTransportTest : public ::testing::Test
     std::unique_ptr<BidirectionalTransportMock> mock_owner_;
     GatewayCoreMock gateway_core_mock_;
     IBidirectionalTransport::MessageHandler captured_handler_;
+    IBidirectionalTransport::ConnectionStateHandler captured_connection_state_handler_;
 };
 
 TEST_F(SampleHyperVisorTransportTest, CanBeConstructedWithValidConfiguration)
@@ -163,6 +165,7 @@ TEST_F(SampleHyperVisorTransportTest, IsMemorySharingSupportedReturnsTrue)
 TEST_F(SampleHyperVisorTransportTest, SetupCallsSetMessageHandlerAndSetupOnTransport)
 {
     EXPECT_CALL(*bi_directional_transport_mock_, SetMessageHandler(::testing::_)).Times(1);
+    EXPECT_CALL(*bi_directional_transport_mock_, SetConnectionStateHandler(::testing::_)).Times(1);
     EXPECT_CALL(*bi_directional_transport_mock_, Setup()).WillOnce(::testing::Return(score::Result<void>{}));
 
     SampleHyperVisorTransport transport(gateway_core_mock_, std::move(mock_owner_));
@@ -177,11 +180,38 @@ TEST_F(SampleHyperVisorTransportTest, SetupReturnsErrorWhenTransportSetupFails)
     // when the BidirectionalTransport's Setup method returns a connection failure error
 
     EXPECT_CALL(*bi_directional_transport_mock_, SetMessageHandler(::testing::_)).Times(1);
+    EXPECT_CALL(*bi_directional_transport_mock_, SetConnectionStateHandler(::testing::_)).Times(1);
     EXPECT_CALL(*bi_directional_transport_mock_, Setup())
         .WillOnce(::testing::Return(score::MakeUnexpected(TransportErrorc::kConnectionFailure)));
     const auto result = transport_->Setup();
     // then calling Setup on SampleHyperVisorTransport should return an error
     EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(SampleHyperVisorTransportTest, ConnectionToRemoteGatewayIsReportedToGatewayCore)
+{
+    // Given a SampleHyperVisorTransport, which has been set up
+    this->WithASampleHyperVisorTransport().WithARegisteredOnSetupCallback();
+
+    // Expecting that the gateway core is informed about the (re-)established connection
+    EXPECT_CALL(gateway_core_mock_, OnRemoteGatewayConnected());
+    EXPECT_CALL(gateway_core_mock_, OnRemoteGatewayDisconnected()).Times(0);
+
+    // When the BidirectionalTransport reports an established connection
+    captured_connection_state_handler_(true);
+}
+
+TEST_F(SampleHyperVisorTransportTest, LostConnectionToRemoteGatewayIsReportedToGatewayCore)
+{
+    // Given a SampleHyperVisorTransport, which has been set up
+    this->WithASampleHyperVisorTransport().WithARegisteredOnSetupCallback();
+
+    // Expecting that the gateway core is informed about the lost connection
+    EXPECT_CALL(gateway_core_mock_, OnRemoteGatewayDisconnected());
+    EXPECT_CALL(gateway_core_mock_, OnRemoteGatewayConnected()).Times(0);
+
+    // When the BidirectionalTransport reports a lost connection
+    captured_connection_state_handler_(false);
 }
 
 TEST_F(SampleHyperVisorTransportTest, ShutdownCallsShutdownOnTransport)
@@ -263,94 +293,12 @@ TEST_F(SampleHyperVisorTransportTest, UnregisterUpdateNotificationWithCorrectTyp
     std::ignore = transport_->UnregisterUpdateNotification(specifier, impl::ServiceElementType::EVENT, "SpeedEvent");
 }
 
-TEST_F(SampleHyperVisorTransportTest, ResolveShmPathReturnsEmptyObjectIfSpecifierCanNotBeResolved)
-{
-    // Given a valid instance specifier and a mocked runtime
-    const auto specifier = CreateValidInstanceSpecifier();
-    impl::RuntimeMockGuard runtime_mock_guard_{};
-
-    // When the runtime can not resolve the instance specifier
-    EXPECT_CALL(runtime_mock_guard_.runtime_mock_, resolve(::testing::_))
-        .WillOnce(::testing::Return(std::vector<impl::InstanceIdentifier>{}));
-
-    // Then the returned SHM paths for control and data should both be empty
-    const auto resolved_shm_paths = ResolveShmPaths(specifier);
-    EXPECT_TRUE(resolved_shm_paths.control.empty());
-    EXPECT_TRUE(resolved_shm_paths.data.empty());
-}
-
-TEST_F(SampleHyperVisorTransportTest, ResolveShmPathReturnsEmptyObjectIfServiceInstanceDeploymentIsInvalid)
-{
-    // Given a valid instance specifier and a mocked runtime
-    const auto specifier = CreateValidInstanceSpecifier();
-    impl::RuntimeMockGuard runtime_mock_guard_{};
-
-    // When providing an (invalid) instance identifier without a instance deployment that will be used to resolve the
-    // SHM paths
-    score::mw::com::impl::DummyInstanceIdentifierBuilder builder{};
-    auto instance_identifier = builder.CreateBlankBindingInstanceIdentifier();
-
-    EXPECT_CALL(runtime_mock_guard_.runtime_mock_, resolve(::testing::_))
-        .WillOnce(::testing::Return(std::vector<impl::InstanceIdentifier>{instance_identifier}));
-
-    // Then the returned SHM paths for control and data should both be empty
-    const auto resolved_shm_paths = ResolveShmPaths(specifier);
-    EXPECT_TRUE(resolved_shm_paths.control.empty());
-    EXPECT_TRUE(resolved_shm_paths.data.empty());
-}
-
-TEST_F(SampleHyperVisorTransportTest, ResolveShmPathReturnsEmptyObjectIfServiceTypeDeploymentIsInvalid)
-{
-    // Given a valid instance specifier and a mocked runtime
-    const auto specifier = CreateValidInstanceSpecifier();
-    impl::RuntimeMockGuard runtime_mock_guard_{};
-
-    // When providing an (invalid) instance identifier without a type deployment that will be used to resolve the SHM
-    // paths
-    score::mw::com::impl::DummyInstanceIdentifierBuilder builder{};
-    auto instance_identifier = builder.CreateLolaInstanceIdentifierWithoutTypeDeployment();
-
-    EXPECT_CALL(runtime_mock_guard_.runtime_mock_, resolve(::testing::_))
-        .WillOnce(::testing::Return(std::vector<impl::InstanceIdentifier>{instance_identifier}));
-
-    // Then the returned SHM paths for control and data should both be empty
-    const auto resolved_shm_paths = ResolveShmPaths(specifier);
-    EXPECT_TRUE(resolved_shm_paths.control.empty());
-    EXPECT_TRUE(resolved_shm_paths.data.empty());
-}
-
-TEST_F(SampleHyperVisorTransportTest, GetShmSizesReturnsZeroSizesIfResolveShmPathsReturnsEmptyPaths)
-{
-    // Given a valid instance specifier and a mocked runtime
-    const auto specifier = CreateValidInstanceSpecifier();
-    impl::RuntimeMockGuard runtime_mock_guard_{};
-
-    // When providing an (invalid) instance identifier without a type deployment that will be used to resolve the SHM
-    // paths
-    score::mw::com::impl::DummyInstanceIdentifierBuilder builder{};
-    auto instance_identifier = builder.CreateLolaInstanceIdentifierWithoutTypeDeployment();
-
-    EXPECT_CALL(runtime_mock_guard_.runtime_mock_, resolve(::testing::_))
-        .WillOnce(::testing::Return(std::vector<impl::InstanceIdentifier>{instance_identifier}));
-
-    // Then the returned SHM sizes for control and data should both be 0
-    const auto shm_sizes = GetShmSizes(specifier);
-    EXPECT_TRUE(shm_sizes.control == 0U);
-    EXPECT_TRUE(shm_sizes.data == 0U);
-}
-
 TEST_F(SampleHyperVisorTransportTest,
        OnMessageReceivedProvideServiceRequestWithValidInstanceSpecifierCallsProvideServiceOnGatewayCore)
 {
     // Given a SampleHyperVisorTransport, a mocked runtime and a message handler callback has been set for the
     // underlying BiDirectionalTransport
     this->WithASampleHyperVisorTransport().WithARegisteredOnSetupCallback();
-    impl::RuntimeMockGuard runtime_mock_guard_{};
-    // PreCreateInterVmSharedMemory calls ResolveShmPaths, which needs the runtime mock.
-    // Return empty identifiers so that ResolveShmPaths returns empty paths and PreCreateInterVmSharedMemory returns
-    // early.
-    EXPECT_CALL(runtime_mock_guard_.runtime_mock_, resolve(::testing::_))
-        .WillOnce(::testing::Return(std::vector<impl::InstanceIdentifier>{}));
 
     // When a ProvideServiceRequest message with a valid instance specifier is received
     auto request = CreateMessageOfType(MessageType::kProvideServiceRequest);
@@ -370,7 +318,6 @@ TEST_F(SampleHyperVisorTransportTest,
     // Given a SampleHyperVisorTransport, a mocked runtime and a message handler callback has been set for the
     // underlying BiDirectionalTransport
     this->WithASampleHyperVisorTransport().WithARegisteredOnSetupCallback();
-    impl::RuntimeMockGuard runtime_mock_guard_{};
 
     // When a ProvideServiceRequest message with an invalid instance specifier is received
     auto request = CreateMessageOfType(MessageType::kProvideServiceRequest, false);
@@ -593,6 +540,9 @@ TEST_F(SampleHyperVisorTransportTest, UnsupportedMessageWillBeLogged)
 
     // Invoke the captured handler to trigger OnMessageReceived
     captured_handler_(std::move(request));
+
+    // The mocked LogRecorder is destroyed at the end of the test, so it must not be used by subsequent tests
+    score::mw::log::SetLogRecorder(nullptr);
 }
 
 TEST_F(SampleHyperVisorTransportTest, InvalidMessageWillBeLogged)
@@ -613,18 +563,35 @@ TEST_F(SampleHyperVisorTransportTest, InvalidMessageWillBeLogged)
 
     // Invoke the captured handler to trigger OnMessageReceived
     captured_handler_(std::move(request));
+
+    // The mocked LogRecorder is destroyed at the end of the test, so it must not be used by subsequent tests
+    score::mw::log::SetLogRecorder(nullptr);
 }
 
-TEST_F(SampleHyperVisorTransportTest, ProvideServiceDeathTest)
+TEST_F(SampleHyperVisorTransportTest, ProvideServiceSendsProvideServiceRequestWithoutShmSizes)
 {
     // Given a SampleHyperVisorTransport
     this->WithASampleHyperVisorTransport();
 
-    // When calling ProvideService with a valid instance specifier, then it is expected to terminate.
-    // TODO This test needs to be adapted when implementing ResolveShmPaths() and GetShmSizes() based on the actual
-    // HyperVisor SHM technology.
-    EXPECT_DEATH(
-        std::ignore = transport_->ProvideService(CreateValidInstanceSpecifier(), std::vector<impl::EventInfo>{}), ".*");
+    // Expecting that a ProvideServiceRequest without shm sizes is sent, since the destination side finds the
+    // shm-objects within the inter-VM shared memory region
+    EXPECT_CALL(*bi_directional_transport_mock_, SendRequest(::testing::_))
+        .WillOnce([](TransportMessage& message) -> score::Result<void> {
+            const auto* const request = dynamic_cast<const ProvideServiceRequest*>(&message);
+            EXPECT_NE(request, nullptr);
+            if (request != nullptr)
+            {
+                EXPECT_EQ(request->GetShmControlSize(), 0U);
+                EXPECT_EQ(request->GetShmDataSize(), 0U);
+            }
+            return {};
+        });
+
+    // When calling ProvideService
+    const auto result = transport_->ProvideService(CreateValidInstanceSpecifier(), std::vector<impl::EventInfo>{});
+
+    // Then it succeeds
+    EXPECT_TRUE(result.has_value());
 }
 
 }  // namespace
