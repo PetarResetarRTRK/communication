@@ -53,12 +53,13 @@ offset 0                           GetSize()              GetSize() + 64 KiB
 
 ## Platform requirements
 
-- The region is accessible via a file on each VM, which supports `mmap()` with offsets:
-  - On the hypervisor host (e.g. QNX), the POSIX shm-object of the region, e.g. `/dev/shmem/<name>`. With the QNX
-    hypervisor, the region can be created when the VM starts with `vdev shmem create <name>,<size>[,mode[,gid]]`
-    (`subst` changes the name on the host side).
-  - Within a guest (e.g. Linux), the device node of the driver of the shared memory device. Offset 0 of the device
-    node has to be the start of the region (i.e. behind the control page of `vdev shmem`).
+- The region is accessible via a file on each VM, which supports `mmap()` with offsets. The region may start at an
+  offset within the file, which has to be a multiple of the page size:
+  - On the hypervisor host (e.g. QNX), the POSIX shm-object of the region. With the QNX hypervisor, the region can be
+    created when the VM starts with `vdev shmem create <name>,<size>[,mode[,gid]]`. On the host, it is
+    `/dev/shmem/QVMSHM-<name>` (`subst` changes the name), and it starts with the region's 4 KiB control page, so the
+    region starts at offset 4096.
+  - Within a guest (e.g. Linux), the device node of the driver of the shared memory device.
 - The region has to be zero-initialized, when it is created, and its size has to be configured identically on all VMs.
 - The region has to be mapped cacheable and coherent on all VMs, since the directory and the shm-objects (e.g. the
   control segments of LoLa) are accessed with atomic operations from all VMs.

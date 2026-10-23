@@ -100,13 +100,15 @@ TEST_F(RuntimeFixture, VmIndexIsZeroWithoutInterVmSharedMemory)
 
 TEST_F(RuntimeFixture, InterVmSharedMemoryRegionIsUsedForInterVmShmObjects)
 {
-    // Given an inter-VM shared memory region, which is simulated by a POSIX shm-object
+    // Given an inter-VM shared memory region, which is simulated by a POSIX shm-object, in which it starts behind a
+    // control page (with a size, which is a multiple of all page sizes)
     constexpr auto kRegionShmName = "/score_mw_com_lola_runtime_test_region";
 #if defined(__QNXNTO__)
     constexpr auto kRegionPath = "/dev/shmem/score_mw_com_lola_runtime_test_region";
 #else
     constexpr auto kRegionPath = "/dev/shm/score_mw_com_lola_runtime_test_region";
 #endif
+    constexpr std::uint64_t kRegionOffset{64U * 1024U};
     constexpr std::uint64_t kRegionSize{1024U * 1024U};
     const auto region_file_descriptor =
         score::os::Mman::instance().shm_open(kRegionShmName,
@@ -114,13 +116,14 @@ TEST_F(RuntimeFixture, InterVmSharedMemoryRegionIsUsedForInterVmShmObjects)
                                              score::os::Stat::Mode::kReadUser | score::os::Stat::Mode::kWriteUser);
     ASSERT_TRUE(region_file_descriptor.has_value());
     ASSERT_TRUE(score::os::Unistd::instance()
-                    .ftruncate(region_file_descriptor.value(), static_cast<off_t>(kRegionSize))
+                    .ftruncate(region_file_descriptor.value(), static_cast<off_t>(kRegionOffset + kRegionSize))
                     .has_value());
     score::cpp::ignore = score::os::Unistd::instance().close(region_file_descriptor.value());
 
     // and a configuration, which places shm-objects of service instances with interVmSupport into the region
     GlobalConfiguration global_configuration{};
-    global_configuration.SetInterVmSharedMemory(InterVmSharedMemoryConfiguration{kRegionPath, kRegionSize, 1U});
+    global_configuration.SetInterVmSharedMemory(
+        InterVmSharedMemoryConfiguration{kRegionPath, kRegionOffset, kRegionSize, 1U});
 
     // When creating the runtime
     SetConfig(Configuration::ServiceTypeDeployments{},
@@ -136,7 +139,7 @@ TEST_F(RuntimeFixture, InterVmSharedMemoryRegionIsUsedForInterVmShmObjects)
     const auto resource = score::memory::shared::SharedMemoryFactory::Create(
         kInterVmShmPath, [](auto) {}, 64U, score::memory::shared::SharedMemoryFactory::WorldWritable{});
     EXPECT_NE(resource, nullptr);
-    const score::memory::shared::SharedMemoryRegion other_user_of_region{kRegionPath, kRegionSize};
+    const score::memory::shared::SharedMemoryRegion other_user_of_region{kRegionPath, kRegionOffset, kRegionSize};
     const auto region_object = other_user_of_region.OpenNamedRegionObject(kInterVmShmPath);
     ASSERT_TRUE(region_object.has_value());
     score::cpp::ignore = score::os::Unistd::instance().close(region_object.value().file_descriptor);

@@ -39,6 +39,8 @@ struct InterVmSharedMemoryConfiguration
 
     /// \brief Path of the file, which gives access to the region on this VM.
     std::string region_path;
+    /// \brief Offset of the region within the file in bytes, e.g. behind a control page of the hypervisor.
+    std::uint64_t region_offset;
     /// \brief Size of the region in bytes. It has to be the same on all VMs.
     std::uint64_t region_size;
     /// \brief Index of this VM. Each VM sharing the region needs a distinct one (smaller than kMaxNumberOfVms).

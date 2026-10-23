@@ -106,6 +106,7 @@ constexpr auto kInterVmSupport = "interVmSupport"sv;
 constexpr auto kInterVmForwarded = "interVmForwarded"sv;
 constexpr auto kInterVmSharedMemoryKey = "interVmSharedMemory"sv;
 constexpr auto kRegionPathKey = "regionPath"sv;
+constexpr auto kRegionOffsetKey = "regionOffset"sv;
 constexpr auto kRegionSizeKey = "regionSize"sv;
 constexpr auto kVmIndexKey = "vmIndex"sv;
 constexpr auto kNumberOfIpcTracingSlotsKey = "numberOfIpcTracingSlots"sv;
@@ -1217,6 +1218,16 @@ auto ParseInterVmSharedMemory(const score::json::Any& inter_vm_shared_memory_jso
     SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_path.has_value() && (!region_path.value().get().empty()),
                                                       "Configuration corrupted, check with json schema");
 
+    std::uint64_t region_offset{0U};
+    const auto& region_offset_it = inter_vm_shared_memory_map.find(kRegionOffsetKey);
+    if (region_offset_it != inter_vm_shared_memory_map.cend())
+    {
+        const auto region_offset_casted = region_offset_it->second.As<std::uint64_t>();
+        SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_offset_casted.has_value(),
+                                                          "Configuration corrupted, check with json schema");
+        region_offset = region_offset_casted.value();
+    }
+
     const auto& region_size_it = inter_vm_shared_memory_map.find(kRegionSizeKey);
     SCORE_LANGUAGE_FUTURECPP_PRECONDITION_PRD_MESSAGE(region_size_it != inter_vm_shared_memory_map.cend(),
                                                       "Configuration corrupted, check with json schema");
@@ -1236,7 +1247,7 @@ auto ParseInterVmSharedMemory(const score::json::Any& inter_vm_shared_memory_jso
         vm_index = static_cast<InterVmSharedMemoryConfiguration::VmIndex>(vm_index_casted.value());
     }
 
-    return InterVmSharedMemoryConfiguration{region_path.value().get(), region_size.value(), vm_index};
+    return InterVmSharedMemoryConfiguration{region_path.value().get(), region_offset, region_size.value(), vm_index};
 }
 
 // See Note 1

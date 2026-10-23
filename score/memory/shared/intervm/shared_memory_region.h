@@ -33,18 +33,21 @@ namespace score::memory::shared
 /// \brief Provider for inter-VM shared memory, which places all named shm-objects into a single shared memory region.
 /// \details The region is provided by the hypervisor (e.g. a region of the QNX hypervisor's shmem device) and is
 ///          accessible on every VM via a file: On the hypervisor host it is a POSIX shm-object (e.g.
-///          /dev/shmem/<name> on QNX), within a guest it is the device node of the driver of the shared memory device.
-///          The file has to support mmap() with offsets. The region starts with a SharedMemoryRegionDirectory, which
-///          maps the names of the shm-objects to their location in the region. Every process, which creates or opens
-///          inter-VM shm-objects, uses its own instance on the same region.
-///          The region is opened lazily, when the first shm-object is created or opened, so that a missing region is
-///          reported as an error of that call.
+///          /dev/shmem/QVMSHM-<name> on QNX), within a guest it is the device node of the driver of the shared memory
+///          device. The file has to support mmap() with offsets. The region may start at an offset within the file,
+///          e.g. behind the control page of the shared memory device. It starts with a SharedMemoryRegionDirectory,
+///          which maps the names of the shm-objects to their location in the region. Every process, which creates or
+///          opens inter-VM shm-objects, uses its own instance on the same region. The region is opened lazily, when the
+///          first shm-object is created or opened, so that a missing region is reported as an error of that call.
 class SharedMemoryRegion final : public TypedMemory
 {
   public:
     /// \param region_path path of the file, which gives access to the region.
+    /// \param region_offset offset of the region within the file in bytes. It has to be a multiple of the page size.
     /// \param region_size size of the region in bytes. It has to be the same on all VMs.
-    SharedMemoryRegion(std::string region_path, const std::uint64_t region_size) noexcept;
+    SharedMemoryRegion(std::string region_path,
+                       const std::uint64_t region_offset,
+                       const std::uint64_t region_size) noexcept;
 
     ~SharedMemoryRegion() noexcept override;
 
@@ -86,6 +89,7 @@ class SharedMemoryRegion final : public TypedMemory
         const SharedMemoryRegionDirectory::Object& object) const noexcept;
 
     const std::string region_path_;
+    const std::uint64_t region_offset_;
     const std::uint64_t region_size_;
 
     mutable std::mutex mutex_;

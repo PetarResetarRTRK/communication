@@ -90,6 +90,7 @@ Runtime::Runtime(const Configuration& config,
         vm_index_ = inter_vm_shared_memory.value().vm_index;
         score::memory::shared::SharedMemoryFactory::SetInterVMMemoryProvider(
             std::make_shared<score::memory::shared::SharedMemoryRegion>(inter_vm_shared_memory.value().region_path,
+                                                                        inter_vm_shared_memory.value().region_offset,
                                                                         inter_vm_shared_memory.value().region_size));
     }
 }

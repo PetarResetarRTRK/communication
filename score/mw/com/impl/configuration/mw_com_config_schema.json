@@ -524,7 +524,7 @@
                         "regionPath": {
                             "type": "string",
                             "title": "Region path",
-                            "description": "Path of the file, which gives access to the region on this VM and supports mmap() with offsets, e.g. the POSIX shm-object of the region on the hypervisor host (/dev/shmem/<name> on QNX) or the device node of the driver of the shared memory device within a guest."
+                            "description": "Path of the file, which gives access to the region on this VM and supports mmap() with offsets, e.g. the POSIX shm-object of the region on the hypervisor host (/dev/shmem/QVMSHM-<name> on QNX) or the device node of the driver of the shared memory device within a guest."
                         },
                         "regionSize": {
                             "type": "integer",
@@ -539,6 +539,13 @@
                             "default": 0,
                             "minimum": 0,
                             "maximum": 1
+                        },
+                        "regionOffset": {
+                            "type": "integer",
+                            "title": "Region offset",
+                            "description": "Offset of the region within the file given by regionPath in bytes, e.g. 4096 for the POSIX shm-object of a region of the QNX hypervisor's shmem device on the host (/dev/shmem/QVMSHM-<name>), which starts with the region's control page. It has to be a multiple of the page size.",
+                            "default": 0,
+                            "minimum": 0
                         }
                     }
                 }

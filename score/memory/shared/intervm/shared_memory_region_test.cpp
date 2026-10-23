@@ -22,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -35,6 +36,9 @@ namespace
 using Error = score::os::Error;
 
 constexpr std::uint64_t kRegionSize{4U * 1024U * 1024U};
+// Offset of the region within its file, e.g. behind a control page, with a size, which is a multiple of all page sizes.
+constexpr std::uint64_t kRegionOffset{64U * 1024U};
+constexpr std::uint8_t kControlPageContent{0xC3U};
 constexpr auto kRegionShmName = "/score_memory_shared_intervm_region_test";
 #if defined(__QNXNTO__)
 constexpr auto kRegionPath = "/dev/shmem/score_memory_shared_intervm_region_test";
@@ -115,13 +119,36 @@ class SharedMemoryRegionTest : public ::testing::Test
             score::os::Unistd::instance().ftruncate(file_descriptor.value(), static_cast<off_t>(size)).has_value());
         score::cpp::ignore = score::os::Unistd::instance().close(file_descriptor.value());
     }
+
+    /// \brief Maps the part of the file in front of a region at kRegionOffset (e.g. a control page) for the given
+    /// access.
+    template <typename Access>
+    static void AccessControlPage(Access access)
+    {
+        const auto file_descriptor =
+            score::os::Mman::instance().shm_open(kRegionShmName,
+                                                 score::os::Fcntl::Open::kReadWrite,
+                                                 score::os::Stat::Mode::kReadUser | score::os::Stat::Mode::kWriteUser);
+        ASSERT_TRUE(file_descriptor.has_value());
+        const auto address =
+            score::os::Mman::instance().mmap(nullptr,
+                                             kRegionOffset,
+                                             score::os::Mman::Protection::kRead | score::os::Mman::Protection::kWrite,
+                                             score::os::Mman::Map::kShared,
+                                             file_descriptor.value(),
+                                             0);
+        ASSERT_TRUE(address.has_value());
+        access(static_cast<std::uint8_t*>(address.value()));
+        score::cpp::ignore = score::os::Mman::instance().munmap(address.value(), kRegionOffset);
+        score::cpp::ignore = score::os::Unistd::instance().close(file_descriptor.value());
+    }
 };
 
 TEST_F(SharedMemoryRegionTest, ObjectCreatedByOneUserOfTheRegionCanBeOpenedByAnother)
 {
     // Given two users of the same region, e.g. on different VMs
-    const SharedMemoryRegion creator{kRegionPath, kRegionSize};
-    const SharedMemoryRegion opener{kRegionPath, kRegionSize};
+    const SharedMemoryRegion creator{kRegionPath, 0U, kRegionSize};
+    const SharedMemoryRegion opener{kRegionPath, 0U, kRegionSize};
 
     // When one of them creates an object and writes to it
     const auto created = creator.CreateNamedRegionObject(kObjectName, 4096U);
@@ -146,7 +173,7 @@ TEST_F(SharedMemoryRegionTest, ObjectCreatedByOneUserOfTheRegionCanBeOpenedByAno
 
 TEST_F(SharedMemoryRegionTest, ObjectIsPlacedBehindTheDirectoryOfTheRegion)
 {
-    const SharedMemoryRegion region{kRegionPath, kRegionSize};
+    const SharedMemoryRegion region{kRegionPath, 0U, kRegionSize};
 
     // When creating an object
     const auto created = region.CreateNamedRegionObject(kObjectName, 100U);
@@ -160,7 +187,7 @@ TEST_F(SharedMemoryRegionTest, ObjectIsPlacedBehindTheDirectoryOfTheRegion)
 
 TEST_F(SharedMemoryRegionTest, OpeningAnUnknownObjectFails)
 {
-    const SharedMemoryRegion region{kRegionPath, kRegionSize};
+    const SharedMemoryRegion region{kRegionPath, 0U, kRegionSize};
 
     // When opening an object, which hasn't been created
     const auto result = region.OpenNamedRegionObject(kObjectName);
@@ -174,7 +201,7 @@ TEST_F(SharedMemoryRegionTest, AccessFailsIfTheRegionDoesNotExist)
 {
     // Given a region, which doesn't exist (yet)
     TearDown();
-    const SharedMemoryRegion region{kRegionPath, kRegionSize};
+    const SharedMemoryRegion region{kRegionPath, 0U, kRegionSize};
 
     // When creating an object
     // Then it fails
@@ -190,7 +217,52 @@ TEST_F(SharedMemoryRegionTest, AccessFailsIfTheRegionDoesNotExist)
 TEST_F(SharedMemoryRegionTest, AccessFailsIfTheRegionIsSmallerThanConfigured)
 {
     // Given a region, which is smaller than configured
-    const SharedMemoryRegion region{kRegionPath, kRegionSize * 2U};
+    const SharedMemoryRegion region{kRegionPath, 0U, kRegionSize * 2U};
+
+    // When creating an object
+    const auto result = region.CreateNamedRegionObject(kObjectName, 100U);
+
+    // Then it fails
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), Error::Code::kInvalidArgument);
+}
+
+TEST_F(SharedMemoryRegionTest, RegionStartsAtItsOffsetWithinTheFile)
+{
+    // Given a file, in which the region starts behind a control page, which must not be touched
+    CreateRegion(kRegionOffset + kRegionSize);
+    AccessControlPage([](std::uint8_t* const control_page) {
+        std::memset(control_page, kControlPageContent, kRegionOffset);
+    });
+    const SharedMemoryRegion creator{kRegionPath, kRegionOffset, kRegionSize};
+    const SharedMemoryRegion opener{kRegionPath, kRegionOffset, kRegionSize};
+
+    // When creating an object
+    const auto created = creator.CreateNamedRegionObject(kObjectName, 100U);
+
+    // Then it is located behind the directory at the start of the region
+    ASSERT_TRUE(created.has_value());
+    EXPECT_EQ(created.value().offset, kRegionOffset + SharedMemoryRegionDirectory::GetSize());
+    score::cpp::ignore = score::os::Unistd::instance().close(created.value().file_descriptor);
+
+    // and another user of the region finds it there
+    const auto opened = opener.OpenNamedRegionObject(kObjectName);
+    ASSERT_TRUE(opened.has_value());
+    EXPECT_EQ(opened.value().offset, created.value().offset);
+    score::cpp::ignore = score::os::Unistd::instance().close(opened.value().file_descriptor);
+
+    // and the control page is unchanged
+    AccessControlPage([](const std::uint8_t* const control_page) {
+        EXPECT_TRUE(std::all_of(control_page, control_page + kRegionOffset, [](const std::uint8_t byte) {
+            return byte == kControlPageContent;
+        }));
+    });
+}
+
+TEST_F(SharedMemoryRegionTest, AccessFailsIfTheRegionDoesNotFitBehindItsOffset)
+{
+    // Given a file, which has the size of the region, but in which the region starts at an offset
+    const SharedMemoryRegion region{kRegionPath, kRegionOffset, kRegionSize};
 
     // When creating an object
     const auto result = region.CreateNamedRegionObject(kObjectName, 100U);
@@ -202,7 +274,7 @@ TEST_F(SharedMemoryRegionTest, AccessFailsIfTheRegionIsSmallerThanConfigured)
 
 TEST_F(SharedMemoryRegionTest, TypedMemoryOperationsAreNotSupported)
 {
-    const SharedMemoryRegion region{kRegionPath, kRegionSize};
+    const SharedMemoryRegion region{kRegionPath, 0U, kRegionSize};
 
     // When using the typed memory operations
     // Then they are not supported, but unlinking does nothing and succeeds
@@ -216,7 +288,7 @@ TEST_F(SharedMemoryRegionTest, TypedMemoryOperationsAreNotSupported)
 TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryPlacesInterVmShmObjectsIntoTheRegion)
 {
     // Given the region being used as inter-VM memory provider of this process
-    SharedMemoryFactory::SetInterVMMemoryProvider(std::make_shared<SharedMemoryRegion>(kRegionPath, kRegionSize));
+    SharedMemoryFactory::SetInterVMMemoryProvider(std::make_shared<SharedMemoryRegion>(kRegionPath, 0U, kRegionSize));
 
     // When creating an inter-VM shm-object and writing to it
     const auto resource = SharedMemoryFactory::Create(
@@ -229,7 +301,7 @@ TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryPlacesInterVmShmObjectsIntoThe
     ASSERT_NE(resource, nullptr);
 
     // Then another user of the region (e.g. on another VM) sees the shm-object with the same content
-    const SharedMemoryRegion other_user{kRegionPath, kRegionSize};
+    const SharedMemoryRegion other_user{kRegionPath, 0U, kRegionSize};
     const auto opened = other_user.OpenNamedRegionObject(kObjectName);
     ASSERT_TRUE(opened.has_value());
     const MappedRegionObject opened_mapping{opened.value()};
@@ -247,7 +319,7 @@ TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryPlacesInterVmShmObjectsIntoThe
 TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryDoesNotFallBackToLocalShmIfTheRegionIsFull)
 {
     // Given the region being used as inter-VM memory provider of this process
-    SharedMemoryFactory::SetInterVMMemoryProvider(std::make_shared<SharedMemoryRegion>(kRegionPath, kRegionSize));
+    SharedMemoryFactory::SetInterVMMemoryProvider(std::make_shared<SharedMemoryRegion>(kRegionPath, 0U, kRegionSize));
 
     // When creating an inter-VM shm-object, which doesn't fit into the region
     const auto resource = SharedMemoryFactory::Create(
@@ -255,7 +327,7 @@ TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryDoesNotFallBackToLocalShmIfThe
 
     // Then it fails, instead of creating a local shm-object, which wouldn't be visible on other VMs
     EXPECT_EQ(resource, nullptr);
-    const SharedMemoryRegion other_user{kRegionPath, kRegionSize};
+    const SharedMemoryRegion other_user{kRegionPath, 0U, kRegionSize};
     EXPECT_FALSE(other_user.OpenNamedRegionObject(kObjectName).has_value());
 
     SharedMemoryFactory::SetInterVMMemoryProvider(nullptr);
@@ -264,7 +336,7 @@ TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryDoesNotFallBackToLocalShmIfThe
 TEST_F(SharedMemoryRegionTest, SharedMemoryFactoryOpensInterVmShmObjectsFromTheRegion)
 {
     // Given an inter-VM shm-object, which has been created by another user of the region (e.g. on another VM)
-    SharedMemoryFactory::SetInterVMMemoryProvider(std::make_shared<SharedMemoryRegion>(kRegionPath, kRegionSize));
+    SharedMemoryFactory::SetInterVMMemoryProvider(std::make_shared<SharedMemoryRegion>(kRegionPath, 0U, kRegionSize));
     {
         const auto resource = SharedMemoryFactory::Create(
             kObjectName,

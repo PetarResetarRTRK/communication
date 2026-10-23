@@ -501,7 +501,8 @@ configuration object, which is of a json object type.
         },
        "shm-size-calc-mode": "SIMULATION",
        "interVmSharedMemory": {
-            "regionPath": "/dev/shmem/lola-intervm",
+            "regionPath": "/dev/shmem/QVMSHM-lola-intervm",
+            "regionOffset": 4096,
             "regionSize": 134217728,
             "vmIndex": 0
        }
@@ -571,8 +572,11 @@ service instances with `interVmSupport` can only be created/opened by processes,
 provider.
 
 - `regionPath`: Path of the file, which gives access to the region on this VM, e.g. the POSIX shm-object of the region
-  on the hypervisor host (`/dev/shmem/<name>` on QNX) or the device node of the driver of the shared memory device within
-  a guest. The file has to support `mmap()` with offsets, and the processes need read/write access to it.
+  on the hypervisor host (`/dev/shmem/QVMSHM-<name>` on QNX) or the device node of the driver of the shared memory device
+  within a guest. The file has to support `mmap()` with offsets, and the processes need read/write access to it.
+- `regionOffset`: Offset of the region within this file in bytes (default `0`). On the QNX hypervisor host, the
+  shm-object of a region starts with the region's control page, so the region starts at `4096`. It has to be a multiple
+  of the page size.
 - `regionSize`: Size of the region in bytes. It has to be the same on all VMs.
 - `vmIndex`: Index of this VM (`0` or `1`, default `0`). Each VM sharing the region needs a distinct one: Providers store
   their pid/uid per VM within the shared shm-objects, so that consumers on each VM reach the provider (or the gateway's

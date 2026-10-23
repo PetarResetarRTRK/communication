@@ -38,9 +38,12 @@ score::cpp::unexpected<score::os::Error> MakeError(const std::int32_t error_numb
 
 }  // namespace
 
-SharedMemoryRegion::SharedMemoryRegion(std::string region_path, const std::uint64_t region_size) noexcept
+SharedMemoryRegion::SharedMemoryRegion(std::string region_path,
+                                       const std::uint64_t region_offset,
+                                       const std::uint64_t region_size) noexcept
     : TypedMemory{},
       region_path_{std::move(region_path)},
+      region_offset_{region_offset},
       region_size_{region_size},
       mutex_{},
       region_file_descriptor_{-1},
@@ -137,6 +140,13 @@ score::cpp::expected<SharedMemoryRegionDirectory*, score::os::Error> SharedMemor
                                         << "is too small for its directory of size" << directory_size;
         return MakeError(EINVAL);
     }
+    constexpr auto kMaxFileSize = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if ((region_size_ > kMaxFileSize) || (region_offset_ > (kMaxFileSize - region_size_)))
+    {
+        score::mw::log::LogError("shm") << "Shared memory region" << region_path_ << "with offset" << region_offset_
+                                        << "and size" << region_size_ << "exceeds the maximum file size";
+        return MakeError(EINVAL);
+    }
 
     const auto open_result = score::os::Fcntl::instance().open(
         region_path_.c_str(), score::os::Fcntl::Open::kReadWrite | score::os::Fcntl::Open::kCloseOnExec);
@@ -152,12 +162,11 @@ score::cpp::expected<SharedMemoryRegionDirectory*, score::os::Error> SharedMemor
     score::os::StatBuffer stat_buffer{};
     const auto stat_result = score::os::Stat::instance().fstat(file_descriptor, stat_buffer);
     const bool is_too_small = stat_result.has_value() && (stat_buffer.st_size > 0) &&
-                              (static_cast<std::uint64_t>(stat_buffer.st_size) < region_size_);
+                              (static_cast<std::uint64_t>(stat_buffer.st_size) < (region_offset_ + region_size_));
     if ((!stat_result.has_value()) || is_too_small)
     {
-        score::mw::log::LogError("shm") << "Shared memory region" << region_path_
-                                        << "is smaller than its configured size" << region_size_
-                                        << "or can't be queried";
+        score::mw::log::LogError("shm") << "Shared memory region" << region_path_ << "is smaller than its offset"
+                                        << region_offset_ << "plus its size" << region_size_ << "or can't be queried";
         score::cpp::ignore = score::os::Unistd::instance().close(file_descriptor);
         return stat_result.has_value() ? MakeError(EINVAL) : score::cpp::make_unexpected(stat_result.error());
     }
@@ -168,7 +177,7 @@ score::cpp::expected<SharedMemoryRegionDirectory*, score::os::Error> SharedMemor
                                          score::os::Mman::Protection::kRead | score::os::Mman::Protection::kWrite,
                                          score::os::Mman::Map::kShared,
                                          file_descriptor,
-                                         0);
+                                         static_cast<std::int64_t>(region_offset_));
     if (!mmap_result.has_value())
     {
         score::mw::log::LogError("shm") << "Could not map the directory of shared memory region" << region_path_ << ":"
@@ -209,7 +218,7 @@ score::cpp::expected<TypedMemory::RegionObject, score::os::Error> SharedMemoryRe
                                         << region_path_ << ":" << dup_result.error();
         return score::cpp::make_unexpected(dup_result.error());
     }
-    return RegionObject{dup_result.value(), object.offset, static_cast<std::size_t>(object.size)};
+    return RegionObject{dup_result.value(), region_offset_ + object.offset, static_cast<std::size_t>(object.size)};
 }
 
 }  // namespace score::memory::shared
