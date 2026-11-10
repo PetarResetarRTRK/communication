@@ -21,7 +21,6 @@
 
 #include <cstddef>
 #include <functional>
-#include <scoped_allocator>
 #include <tuple>
 #include <utility>
 
@@ -60,12 +59,16 @@ namespace score::mw::com::impl::lola
 ///         the LinearSearchMap in shared-memory, the KeyEqual predicate must be stateless and trivially copyable
 ///         (i.e. it must not contain any non-offset pointers or references).
 /// \tparam Allocator allocator used for the underlying storage. Defaults to the shared-memory capable
-///         PolymorphicOffsetPtrAllocator.
+///         PolymorphicOffsetPtrAllocator. It is stored within the map, i.e. in shared-memory, so its layout has to be
+///         the same for all processes using the map. Therefore it must not be wrapped into
+///         std::scoped_allocator_adaptor: its size depends on the C++ standard library (libc++ on QNX: the size of the
+///         wrapped allocator, libstdc++ on Linux: 8 bytes more), which shifts all following members for processes on
+///         different OSes sharing it via an inter-VM shared memory region. The mapped types get their memory resource
+///         explicitly on construction anyway.
 template <typename Key,
           typename MappedType,
           typename KeyEqual = std::equal_to<Key>,
-          typename Allocator =
-              std::scoped_allocator_adaptor<memory::shared::PolymorphicOffsetPtrAllocator<std::pair<Key, MappedType>>>>
+          typename Allocator = memory::shared::PolymorphicOffsetPtrAllocator<std::pair<Key, MappedType>>>
 class LinearSearchMap
 {
   public:
