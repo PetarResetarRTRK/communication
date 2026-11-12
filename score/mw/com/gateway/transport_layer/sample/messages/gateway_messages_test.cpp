@@ -128,6 +128,28 @@ TEST(GatewayMessagesTest, UpdateNotificationRoundTrip)
     EXPECT_EQ(deserialized.GetInstanceSpecifier(), "SpeedService/Instance1");
     EXPECT_EQ(deserialized.GetElementType(), impl::ServiceElementType::EVENT);
     EXPECT_EQ(deserialized.GetElementName(), "SpeedEvent");
+    EXPECT_TRUE(deserialized.GetData().empty());
+}
+
+TEST(GatewayMessagesTest, UpdateNotificationWithDataRoundTrip)
+{
+    auto specifier = score::mw::com::InstanceSpecifier::Create(std::string{"SpeedService/Instance1"});
+    ASSERT_TRUE(specifier.has_value());
+
+    const std::vector<std::uint8_t> data{0x01U, 0x00U, 0xFFU, 0x7FU, 0x80U};
+    UpdateNotification original{std::move(specifier).value(), impl::ServiceElementType::EVENT, "SpeedEvent", data};
+
+    std::array<std::uint8_t, kTestBufferSize> buffer{};
+    const auto size = original.Serialize(buffer);
+    ASSERT_GT(size, 0U);
+
+    UpdateNotification deserialized;
+    ASSERT_TRUE(deserialized.Deserialize(score::cpp::span<const std::uint8_t>(buffer.data(), size)));
+
+    EXPECT_EQ(deserialized.GetInstanceSpecifier(), "SpeedService/Instance1");
+    EXPECT_EQ(deserialized.GetElementType(), impl::ServiceElementType::EVENT);
+    EXPECT_EQ(deserialized.GetElementName(), "SpeedEvent");
+    EXPECT_EQ(deserialized.GetData(), data);
 }
 
 TEST(GatewayMessagesTest, RegisterNotificationRequestRoundTrip)

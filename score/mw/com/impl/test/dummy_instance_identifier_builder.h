@@ -42,6 +42,10 @@ class DummyInstanceIdentifierBuilder
     InstanceIdentifier CreateLolaInstanceIdentifierWithoutTypeDeployment();
     InstanceIdentifier CreateBlankBindingInstanceIdentifier();
 
+    /// \brief Sets interVmSupport and interVmForwarded of the LoLa deployment of the instance identifiers created
+    ///        afterwards.
+    void SetInterVmFlags(const bool inter_vm_support, const bool inter_vm_forwarded);
+
   private:
     LolaServiceInstanceDeployment service_instance_deployment_;
 

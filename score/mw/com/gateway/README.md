@@ -26,7 +26,7 @@ This README describes the implementation details specific to this codebase.
 | [transport_layer/transport.h](transport_layer/transport.h) | `Transport` abstract base class — called by `GatewayApplication` to send cross-domain requests. |
 | [transport_layer/transport_factory.h](transport_layer/transport_factory.h) | Creates the correct `Transport` implementation from configuration. |
 | [transport_layer/transport_mock.h](transport_layer/transport_mock.h) | GMock of `Transport` used in unit tests. |
-| [transport_layer/sample/](transport_layer/sample/) | Sample transport layer implementation: relies on the inter-VM shared memory region of a hypervisor system (see [Memory Sharing via an Inter-VM Shared Memory Region](#memory-sharing-via-an-inter-vm-shared-memory-region)) and uses TCP sockets for side-channel communication. |
+| [transport_layer/sample/](transport_layer/sample/) | Sample transport layer implementation: TCP sockets between the gateways. Carries the samples of service instances, which are copied, and only the notifications of those shared via the inter-VM shared memory region of a hypervisor system (see [Gateway Types](#gateway-types)). |
 
 ## Architecture
 
@@ -59,10 +59,19 @@ registrations. `GatewayApplication` implements this interface.
 
 ### Gateway Types
 
+The way the samples of a forwarded service instance get to the destination domain follows the instance's LoLa
+deployment in the gateways' `mw_com_config.json`, per service instance (`Transport::IsMemorySharingSupported()` is not
+evaluated). Both kinds can be used side by side.
+
 | Type | Determined by | Description |
 |---|---|---|
-| **Copying Gateway** | `Transport::IsMemorySharingSupported()` returns `false` | Copies event data between domains via the transport layer. |
-| **MemorySharing Gateway** | `Transport::IsMemorySharingSupported()` returns `true` | Shares the source domain's memory objects directly with the destination domain, avoiding data copying. |
+| **Copying (TCP data transfer)** | The instance has no `interVmSupport` in the source domain. | The source gateway reads each new sample from its `GenericProxy` and sends its bytes with the update notification. The destination gateway's Forwarding Skeleton has shm-objects of its own: it allocates a sample, copies the bytes into it and sends it. |
+| **Memory sharing** | The instance has `interVmSupport` in the source domain, and `interVmSupport` and `interVmForwarded` in the destination domain. | The domains share the provider's shm-objects in an inter-VM shared memory region, see below. The gateways only forward notifications without data. |
+
+A copied sample travels in one transport message, so it has to fit into its payload together with the instance
+specifier and the event name (`MessageFramer::kMaxPayloadSize`, 1024 bytes, for the sample transport). A Forwarding
+Skeleton with `interVmForwarded` ignores data in update notifications (it must not allocate samples in the provider's
+shm-objects) and only notifies: the source domain's instance should then have `interVmSupport`.
 
 ### Memory Sharing via an Inter-VM Shared Memory Region
 
@@ -249,13 +258,18 @@ Triggered when the source gateway detects new event data and the destination sid
 1. On the source side, the `SetReceiveHandler` callback registered in step 5 above fires — new event data
    arrived.
 2. On the source side, `GatewayApplication` calls `Transport::NotifyUpdate(InstanceSpecifier,
-   ServiceElementType::EVENT, event_name)`.
+   ServiceElementType::EVENT, event_name, data)`. For a copied instance, `data` holds the bytes of the new sample, which
+   it reads with `GenericProxyEvent::GetNewSamples()`; for a shared one (`interVmSupport`), it is empty (see
+   [Gateway Types](#gateway-types)).
 3. The transport layer forwards a `NotifyUpdate` message to the destination gateway.
 4. On the destination side, the transport layer calls `GatewayCore::NotifyUpdate(InstanceSpecifier,
-   ServiceElementType::EVENT, event_name)`.
-5. On the destination side, `GatewayApplication` calls `GenericSkeletonEvent::Notify()` on the corresponding
-   event of the `Forwarding Skeleton`, which triggers the message-passing update notification to all local
-   consumers.
+   ServiceElementType::EVENT, event_name, data)`.
+5. On the destination side, `GatewayApplication` handles the corresponding event of the `Forwarding Skeleton`:
+   - with `data` (copied instance): `GenericSkeletonEvent::Allocate()`, copies `data` into the sample and
+     `GenericSkeletonEvent::Send()`s it;
+   - without `data` (shared instance): `GenericSkeletonEvent::Notify()`.
+
+   Both trigger the message-passing update notification to all local consumers.
 
 ---
 

@@ -161,7 +161,7 @@ int main()
 
     // Confirm back to VM-A over the transport that we verified its data.
     const auto verified_result =
-        qemu_transport.NotifyUpdate(spec_a.value(), ServiceElementType::EVENT, kElementNameVerified);
+        qemu_transport.NotifyUpdate(spec_a.value(), ServiceElementType::EVENT, kElementNameVerified, {});
     if (!verified_result.has_value())
     {
         std::cerr << "app2: Verified notification for service_a failed to send\n";
@@ -233,7 +233,7 @@ int main()
     // Notify VM-A (over the transport, not shared memory) that service_b's DATA is ready.
     // See app1_main.cpp for the FIFO-ordering argument that guarantees delivery order.
     const auto notify_result =
-        qemu_transport.NotifyUpdate(spec_b.value(), ServiceElementType::EVENT, kElementNameDataReady);
+        qemu_transport.NotifyUpdate(spec_b.value(), ServiceElementType::EVENT, kElementNameDataReady, {});
     if (!notify_result.has_value())
     {
         std::cerr << "app2: DataReady notification for service_b failed to send\n";

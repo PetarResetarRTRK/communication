@@ -142,7 +142,8 @@ class TestGatewayCore final : public score::mw::com::gateway::GatewayCore
     void StopOfferService(score::mw::com::InstanceSpecifier /*s*/) override {}
     score::Result<void> NotifyUpdate(score::mw::com::InstanceSpecifier s,
                                      ServiceElementType /*t*/,
-                                     std::string element_name) override
+                                     std::string element_name,
+                                     std::vector<std::uint8_t> /*data*/) override
     {
         const auto service = s.ToString();
         if (service == kServiceA && element_name == kElementNameDataReady)

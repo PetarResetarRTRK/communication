@@ -253,7 +253,7 @@ TEST_F(QemuHypervisorTransportTest, NotifyUpdateSendsUpdateNotification)
         .WillOnce(::testing::Return(score::Result<void>{}));
     EXPECT_CALL(*bi_directional_transport_mock_, Shutdown()).Times(1);
 
-    const auto result = transport_->NotifyUpdate(specifier, impl::ServiceElementType::EVENT, "SpeedEvent");
+    const auto result = transport_->NotifyUpdate(specifier, impl::ServiceElementType::EVENT, "SpeedEvent", {});
     EXPECT_TRUE(result.has_value());
 }
 
@@ -447,7 +447,7 @@ TEST_F(QemuHypervisorTransportTest, OnMessageReceivedUpdateNotificationWithValid
 
     auto request = CreateMessageOfType(MessageType::kUpdateNotification);
 
-    EXPECT_CALL(gateway_core_mock_, NotifyUpdate(::testing::_, ::testing::_, ::testing::_))
+    EXPECT_CALL(gateway_core_mock_, NotifyUpdate(::testing::_, ::testing::_, ::testing::_, ::testing::_))
         .WillOnce(::testing::Return(score::Result<void>{}));
     EXPECT_CALL(*bi_directional_transport_mock_, Shutdown()).Times(1);
 
@@ -460,7 +460,7 @@ TEST_F(QemuHypervisorTransportTest, OnMessageReceivedUpdateNotificationWithInval
 
     auto request = CreateMessageOfType(MessageType::kUpdateNotification, false);
 
-    EXPECT_CALL(gateway_core_mock_, NotifyUpdate(::testing::_, ::testing::_, ::testing::_)).Times(0);
+    EXPECT_CALL(gateway_core_mock_, NotifyUpdate(::testing::_, ::testing::_, ::testing::_, ::testing::_)).Times(0);
     EXPECT_CALL(*bi_directional_transport_mock_, Shutdown()).Times(1);
 
     captured_handler_(std::move(request));

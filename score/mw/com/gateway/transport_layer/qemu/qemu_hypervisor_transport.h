@@ -19,8 +19,10 @@
 #include "score/mw/com/gateway/transport_layer/sample/sample_hypervisor_transport.h"
 #include "score/mw/com/gateway/transport_layer/transport.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace score::mw::com::gateway
 {
@@ -72,7 +74,8 @@ class QemuHypervisorTransport : public Transport
 
     Result<void> NotifyUpdate(impl::InstanceSpecifier service_instance_specifier,
                               impl::ServiceElementType updated_element_type,
-                              std::string updated_element_name) override;
+                              std::string updated_element_name,
+                              std::vector<std::uint8_t> updated_element_data) override;
     Result<void> RegisterUpdateNotification(impl::InstanceSpecifier service_instance_specifier,
                                             impl::ServiceElementType element_type,
                                             std::string element_name) override;

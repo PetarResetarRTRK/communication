@@ -27,6 +27,9 @@ cc_library(
     implementation_deps = [
         ":gateway_error",
         "//score/mw/com/gateway/transport_layer:transport_factory",
+        "//score/mw/com/impl:instance_identifier",
+        "//score/mw/com/impl:runtime",
+        "//score/mw/com/impl/configuration:lola_service_instance_deployment",
         "@score_baselibs//score/language/futurecpp",
         "@score_baselibs//score/mw/log",
     ],

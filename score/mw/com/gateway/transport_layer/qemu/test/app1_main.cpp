@@ -157,7 +157,7 @@ int main()
     // Both messages share one TCP connection with FIFO dispatch on the receiver, so this is
     // guaranteed to be handled after the ProvideServiceRequest above (shm already bound).
     const auto notify_result =
-        qemu_transport.NotifyUpdate(spec_a.value(), ServiceElementType::EVENT, kElementNameDataReady);
+        qemu_transport.NotifyUpdate(spec_a.value(), ServiceElementType::EVENT, kElementNameDataReady, {});
     if (!notify_result.has_value())
     {
         std::cerr << "app1: DataReady notification for service_a failed to send\n";
@@ -235,7 +235,7 @@ int main()
 
     // Confirm back to VM-B over the transport that we verified its data.
     const auto verified_result =
-        qemu_transport.NotifyUpdate(spec_b.value(), ServiceElementType::EVENT, kElementNameVerified);
+        qemu_transport.NotifyUpdate(spec_b.value(), ServiceElementType::EVENT, kElementNameVerified, {});
     if (!verified_result.has_value())
     {
         std::cerr << "app1: Verified notification for service_b failed to send\n";

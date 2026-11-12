@@ -17,14 +17,19 @@
 
 #include "score/mw/com/gateway/gateway_application/gateway_error.h"
 #include "score/mw/com/gateway/transport_layer/transport_factory.h"
+#include "score/mw/com/impl/configuration/lola_service_instance_deployment.h"
+#include "score/mw/com/impl/instance_identifier.h"
+#include "score/mw/com/impl/runtime.h"
 #include "score/mw/log/logging.h"
 #include <score/assert.hpp>
 
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace score::mw::com::gateway
@@ -32,9 +37,43 @@ namespace score::mw::com::gateway
 
 namespace
 {
-// Subscribe with 1 sample — the gateway just needs notification that data changed,
-// actual data is read directly from shared memory by the consumer.
+// Subscribe with 1 sample — the gateway needs the notification that data changed, and for copied instances the newest
+// sample (see GetInterVmFlags()). For shared instances, the consumers read the data directly from shared memory.
 constexpr std::size_t kGatewaySubscribeSamples = 1U;
+
+/// \brief The inter-VM flags of the LoLa deployment of a service instance in this gateway's mw::com configuration.
+/// \details They select, how the samples of a forwarded service instance get to the destination side:
+///          - interVmSupport: the shm-objects of the instance are in the inter-VM shared memory region. The
+///            destination gateway's forwarding skeleton (interVmForwarded) uses the very same shm-objects, so the
+///            gateways only forward notifications without data.
+///          - otherwise: the source gateway copies each sample into the update notification, and the destination
+///            gateway sends it via its forwarding skeleton, which has shm-objects of its own (TCP data transfer).
+///          Both flags are false for instances, which are unknown or have no LoLa deployment.
+struct InterVmFlags
+{
+    bool inter_vm_support{false};
+    bool inter_vm_forwarded{false};
+};
+
+InterVmFlags GetInterVmFlags(const std::string& specifier_str)
+{
+    const auto specifier_result = score::mw::com::InstanceSpecifier::Create(std::string{specifier_str});
+    if (!specifier_result.has_value())
+    {
+        return {};
+    }
+    for (const auto& identifier : impl::Runtime::getInstance().resolve(specifier_result.value()))
+    {
+        const auto& binding_info =
+            impl::InstanceIdentifierView{identifier}.GetServiceInstanceDeployment().bindingInfo_;
+        const auto* const lola_deployment = std::get_if<impl::LolaServiceInstanceDeployment>(&binding_info);
+        if (lola_deployment != nullptr)
+        {
+            return InterVmFlags{lola_deployment->inter_vm_support_, lola_deployment->inter_vm_forwarded_};
+        }
+    }
+    return {};
+}
 
 }  // namespace
 
@@ -512,15 +551,62 @@ score::Result<void> GatewayApplication::RegisterUpdateNotification(
         return MakeUnexpected(GatewayErrorc::kSubscriptionFailed);
     }
 
+    // The samples of an instance with interVmSupport are shared via the inter-VM shared memory region, so only the
+    // notification is forwarded. Otherwise each new sample is copied into the notification (see GetInterVmFlags()).
+    const bool copy_samples = !GetInterVmFlags(specifier_str).inter_vm_support;
+
     using ReceiveCallback = safecpp::MoveOnlyScopedFunction<void()>;
     auto scoped_handler = std::make_shared<ReceiveCallback>(
-        scope_, [this, spec = specifier_str, elem_name = std::string(element_name), elem_type = element_type]() {
+        scope_,
+        [this,
+         spec = specifier_str,
+         elem_name = std::string(element_name),
+         elem_type = element_type,
+         copy_samples]() {
             std::lock_guard<std::recursive_mutex> lock(mutex_);
+            score::mw::log::LogDebug() << "GatewayApplication: scoped_handler for " << spec << " element " << elem_name;
+
+            std::vector<std::uint8_t> sample_data{};
+            if (copy_samples)
+            {
+                const auto proxy_it = proxies_.find(spec);
+                if (proxy_it == proxies_.cend())
+                {
+                    score::mw::log::LogError()
+                        << "GatewayApplication: No proxy found for " << spec << " in update receive handler";
+                    return;
+                }
+
+                auto proxy_event_map = proxy_it->second.GetEvents();
+                const auto proxy_event_it = proxy_event_map.find(elem_name);
+                if (proxy_event_it == proxy_event_map.cend())
+                {
+                    score::mw::log::LogError() << "GatewayApplication: Event " << elem_name
+                                               << " not found in proxy for " << spec << " in update receive handler";
+                    return;
+                }
+
+                auto& source_proxy_event = proxy_event_it->second;
+                const auto data_size = source_proxy_event.GetDataTypeSizeInfo().Size();
+
+                const auto get_samples_result = source_proxy_event.GetNewSamples(
+                    [&sample_data, data_size](auto sample) {
+                        sample_data.resize(data_size);
+                        std::memcpy(sample_data.data(), sample.get(), data_size);
+                    },
+                    kGatewaySubscribeSamples);
+                if (!get_samples_result.has_value())
+                {
+                    score::mw::log::LogError()
+                        << "GatewayApplication: Failed to read new samples for " << elem_name << " of " << spec;
+                }
+            }
+
             auto specifier_result = score::mw::com::InstanceSpecifier::Create(std::string{spec});
             if (specifier_result.has_value())
             {
                 const auto notify_update_result = transport_layer_->NotifyUpdate(
-                    std::move(specifier_result).value(), elem_type, std::string{elem_name});
+                    std::move(specifier_result).value(), elem_type, std::string{elem_name}, std::move(sample_data));
                 if (!notify_update_result.has_value())
                 {
                     score::mw::log::LogError() << "GatewayApplication: Failed to notify update for " << elem_name;
@@ -576,7 +662,8 @@ score::Result<void> GatewayApplication::UnregisterUpdateNotification(
 
 score::Result<void> GatewayApplication::NotifyUpdate(score::mw::com::InstanceSpecifier service_instance_specifier,
                                                      impl::ServiceElementType updated_element_type,
-                                                     std::string updated_element_name)
+                                                     std::string updated_element_name,
+                                                     std::vector<std::uint8_t> updated_element_data)
 {
     auto specifier_str = std::string(service_instance_specifier.ToString());
 
@@ -599,11 +686,50 @@ score::Result<void> GatewayApplication::NotifyUpdate(score::mw::com::InstanceSpe
         return MakeUnexpected(GatewayErrorc::kUnknownServiceElement);
     }
 
-    const auto notify_result = event_it->second.Notify();
-    if (!notify_result.has_value())
+    auto& skeleton_event = event_it->second;
+
+    // A forwarding skeleton with interVmForwarded uses the shm-objects of the actual provider in the inter-VM shared
+    // memory region, so it must not allocate samples of its own: it only notifies (see GetInterVmFlags()).
+    if (!updated_element_data.empty() && GetInterVmFlags(specifier_str).inter_vm_forwarded)
     {
-        score::mw::log::LogError() << "GatewayApplication: Failed to notify update for event " << updated_element_name;
-        return MakeUnexpected(GatewayErrorc::kNotificationFailed);
+        score::mw::log::LogWarn() << "GatewayApplication: Ignoring the data in the update notification for "
+                                  << updated_element_name << " of " << specifier_str
+                                  << ", since its forwarding skeleton is interVmForwarded. The source gateway's "
+                                     "instance should have interVmSupport.";
+        updated_element_data.clear();
+    }
+
+    if (!updated_element_data.empty())
+    {
+        auto allocate_result = skeleton_event.Allocate();
+        if (!allocate_result.has_value())
+        {
+            score::mw::log::LogError() << "GatewayApplication: Failed to allocate sample for update notification of "
+                                       << updated_element_name;
+            return MakeUnexpected(GatewayErrorc::kNotificationFailed);
+        }
+
+        auto sample = std::move(allocate_result).value();
+        std::memcpy(sample.Get(), updated_element_data.data(), updated_element_data.size());
+
+        const auto send_result = skeleton_event.Send(std::move(sample));
+        if (!send_result.has_value())
+        {
+            score::mw::log::LogError() << "GatewayApplication: Failed to send update notification data for "
+                                       << updated_element_name;
+            return MakeUnexpected(GatewayErrorc::kNotificationFailed);
+        }
+        return {};
+    }
+    else
+    {
+        const auto notify_result = skeleton_event.Notify();
+        if (!notify_result.has_value())
+        {
+            score::mw::log::LogError() << "GatewayApplication: Failed to notify update for event "
+                                       << updated_element_name;
+            return MakeUnexpected(GatewayErrorc::kNotificationFailed);
+        }
     }
     return {};
 }

@@ -25,6 +25,7 @@
 #include "score/mw/com/impl/i_binding_runtime.h"
 #include "score/mw/com/impl/instance_identifier.h"
 #include "score/mw/com/impl/instance_specifier.h"
+#include "score/mw/com/impl/plumbing/sample_allocatee_ptr.h"
 #include "score/mw/com/impl/runtime_mock.h"
 #include "score/mw/com/impl/scoped_event_receive_handler.h"
 #include "score/mw/com/impl/service_discovery_client_mock.h"
@@ -38,6 +39,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <memory>
@@ -172,7 +175,8 @@ TEST(GatewayApplicationNotifyUpdateTest, NoSkeletonReturnsUnknownServiceInstance
     GatewayApplication app{MakeConfig({}, {"svc/b"})};
 
     // When NotifyUpdate is called for that specifier
-    const auto result = app.NotifyUpdate(MakeSpecifier("svc/b"), impl::ServiceElementType::EVENT, "EventA");
+    const auto result = app.NotifyUpdate(
+        MakeSpecifier("svc/b"), impl::ServiceElementType::EVENT, "EventA", std::vector<std::uint8_t>{});
 
     // Then the call must fail with kUnknownServiceInstance
     ASSERT_FALSE(result.has_value());
@@ -646,6 +650,7 @@ class GatewayApplicationFlowTest : public ::testing::Test
                 {
                     events.emplace(name, impl::LolaEventInstanceDeployment{1U, 1U, 1U, true, 0U});
                 }
+                builder.SetInterVmFlags(resolved_inter_vm_support_, resolved_inter_vm_forwarded_);
                 return std::vector<impl::InstanceIdentifier>{
                     builder.CreateValidLolaInstanceIdentifierWithEvent(events)};
             }));
@@ -826,6 +831,11 @@ class GatewayApplicationFlowTest : public ::testing::Test
     // Event names synced into the type deployment returned by the runtime resolve() mock, so that
     // GenericSkeleton::Create can resolve the stable event names the skeleton tests request.
     std::vector<std::string> skeleton_event_names_{"EventA"};
+
+    // interVmSupport / interVmForwarded of the deployment returned by the runtime resolve() mock. Without them, the
+    // gateway copies the samples (TCP data transfer); with them, it only forwards notifications.
+    bool resolved_inter_vm_support_{false};
+    bool resolved_inter_vm_forwarded_{false};
 };
 
 // --- StartServiceDiscovery -----------------------------------------------------------------------
@@ -1067,9 +1077,72 @@ TEST_F(GatewayApplicationFlowTest, ReceiveHandlerFiringForwardsNotifyUpdateOverT
 
     // When RegisterUpdateNotification is requested (which sets and thus fires the handler)
     // Then the gateway forwards a NotifyUpdate for that event over the transport.
-    EXPECT_CALL(*transport_mock_, NotifyUpdate(::testing::_, impl::ServiceElementType::EVENT, std::string{"EventA"}))
+    EXPECT_CALL(*transport_mock_,
+                NotifyUpdate(::testing::_, impl::ServiceElementType::EVENT, std::string{"EventA"}, ::testing::_))
         .WillOnce(::testing::Return(score::Result<void>{}));
 
+    const auto result =
+        app_->RegisterUpdateNotification(MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventA");
+    EXPECT_TRUE(result.has_value());
+}
+
+TEST_F(GatewayApplicationFlowTest, ReceiveHandlerWithoutInterVmSupportReadsTheNewSample)
+{
+    // Given a discovered service whose proxy carries "EventA", and whose instance has no interVmSupport
+    StartAndCaptureFindHandler();
+    FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
+    ASSERT_NE(proxy_event_mocks_.find("EventA"), proxy_event_mocks_.cend());
+
+    // and the binding fires the stored receive handler immediately when it is set
+    ON_CALL(*proxy_event_mocks_["EventA"], SetReceiveHandler(::testing::_))
+        .WillByDefault(::testing::Invoke([](std::weak_ptr<impl::ScopedEventReceiveHandler> handler) {
+            if (auto locked = handler.lock())
+            {
+                (*locked)();
+            }
+            return score::Result<void>{};
+        }));
+
+    // Then the gateway reads the new sample, to copy it into the update notification (TCP data transfer)
+    EXPECT_CALL(*proxy_event_mocks_["EventA"], GetNewSamples(::testing::_, ::testing::_))
+        .WillOnce(::testing::Return(score::Result<std::size_t>{0U}));
+    EXPECT_CALL(*transport_mock_,
+                NotifyUpdate(::testing::_, impl::ServiceElementType::EVENT, std::string{"EventA"}, ::testing::_))
+        .WillOnce(::testing::Return(score::Result<void>{}));
+
+    // When RegisterUpdateNotification is requested (which sets and thus fires the handler)
+    const auto result =
+        app_->RegisterUpdateNotification(MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventA");
+    EXPECT_TRUE(result.has_value());
+}
+
+TEST_F(GatewayApplicationFlowTest, ReceiveHandlerWithInterVmSupportForwardsNotifyUpdateWithoutData)
+{
+    // Given a discovered service whose proxy carries "EventA", and whose instance has interVmSupport, i.e. its samples
+    // are in the inter-VM shared memory region
+    resolved_inter_vm_support_ = true;
+    StartAndCaptureFindHandler();
+    FireServiceDiscovery(impl::ServiceHandleContainer<impl::HandleType>{MakeProxyHandle({"EventA"})});
+    ASSERT_NE(proxy_event_mocks_.find("EventA"), proxy_event_mocks_.cend());
+
+    // and the binding fires the stored receive handler immediately when it is set
+    ON_CALL(*proxy_event_mocks_["EventA"], SetReceiveHandler(::testing::_))
+        .WillByDefault(::testing::Invoke([](std::weak_ptr<impl::ScopedEventReceiveHandler> handler) {
+            if (auto locked = handler.lock())
+            {
+                (*locked)();
+            }
+            return score::Result<void>{};
+        }));
+
+    // Then the gateway doesn't read the sample, and forwards a NotifyUpdate without data
+    EXPECT_CALL(*proxy_event_mocks_["EventA"], GetNewSamples(::testing::_, ::testing::_)).Times(0);
+    EXPECT_CALL(*transport_mock_,
+                NotifyUpdate(
+                    ::testing::_, impl::ServiceElementType::EVENT, std::string{"EventA"}, ::testing::IsEmpty()))
+        .WillOnce(::testing::Return(score::Result<void>{}));
+
+    // When RegisterUpdateNotification is requested (which sets and thus fires the handler)
     const auto result =
         app_->RegisterUpdateNotification(MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventA");
     EXPECT_TRUE(result.has_value());
@@ -1234,7 +1307,53 @@ TEST_F(GatewayApplicationFlowTest, NotifyUpdateWithExistingSkeletonNotifiesEvent
     // Then the skeleton event is notified.
     EXPECT_CALL(*skeleton_event_mocks_["EventA"], Notify()).WillOnce(::testing::Return(score::Result<void>{}));
 
-    const auto result = app_->NotifyUpdate(MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventA");
+    const auto result = app_->NotifyUpdate(
+        MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventA", std::vector<std::uint8_t>{});
+    EXPECT_TRUE(result.has_value());
+}
+
+TEST_F(GatewayApplicationFlowTest, NotifyUpdateWithDataCopiesItIntoAnAllocatedSampleAndSendsIt)
+{
+    // Given a service has been provided with "EventA", whose forwarding skeleton has shm-objects of its own
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+    ASSERT_NE(skeleton_event_mocks_.find("EventA"), skeleton_event_mocks_.cend());
+
+    // Then the skeleton event allocates a sample, which receives the data, and sends it instead of only notifying
+    std::array<std::uint8_t, 4U> sample_memory{};
+    EXPECT_CALL(*skeleton_event_mocks_["EventA"], Allocate(::testing::_))
+        .WillOnce(::testing::Return(::testing::ByMove(impl::MakeSampleAllocateePtr(
+            impl::mock_binding::SampleAllocateePtr{sample_memory.data(), [](void*) {}}))));
+    EXPECT_CALL(*skeleton_event_mocks_["EventA"], Send(::testing::_, ::testing::_))
+        .WillOnce(::testing::Return(score::Result<void>{}));
+    EXPECT_CALL(*skeleton_event_mocks_["EventA"], Notify()).Times(0);
+
+    // When NotifyUpdate is called with the data of a sample
+    const auto result = app_->NotifyUpdate(MakeSpecifier("svc/a"),
+                                           impl::ServiceElementType::EVENT,
+                                           "EventA",
+                                           std::vector<std::uint8_t>{1U, 2U, 3U, 4U});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(sample_memory, (std::array<std::uint8_t, 4U>{1U, 2U, 3U, 4U}));
+}
+
+TEST_F(GatewayApplicationFlowTest, NotifyUpdateWithDataForInterVmForwardedSkeletonOnlyNotifies)
+{
+    // Given a service has been provided with "EventA", whose forwarding skeleton is interVmForwarded, i.e. uses the
+    // shm-objects of the actual provider in the inter-VM shared memory region
+    resolved_inter_vm_support_ = true;
+    resolved_inter_vm_forwarded_ = true;
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+    ASSERT_NE(skeleton_event_mocks_.find("EventA"), skeleton_event_mocks_.cend());
+
+    // Then the data is ignored: no sample is allocated in the provider's shm-objects, the event is only notified
+    EXPECT_CALL(*skeleton_event_mocks_["EventA"], Allocate(::testing::_)).Times(0);
+    EXPECT_CALL(*skeleton_event_mocks_["EventA"], Notify()).WillOnce(::testing::Return(score::Result<void>{}));
+
+    // When NotifyUpdate is called with the data of a sample
+    const auto result = app_->NotifyUpdate(MakeSpecifier("svc/a"),
+                                           impl::ServiceElementType::EVENT,
+                                           "EventA",
+                                           std::vector<std::uint8_t>{1U, 2U, 3U, 4U});
     EXPECT_TRUE(result.has_value());
 }
 
@@ -1245,7 +1364,8 @@ TEST_F(GatewayApplicationFlowTest, NotifyUpdateUnknownEventReturnsError)
 
     // When NotifyUpdate targets an unknown event
     // Then it fails with kUnknownServiceElement.
-    const auto result = app_->NotifyUpdate(MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventX");
+    const auto result = app_->NotifyUpdate(
+        MakeSpecifier("svc/a"), impl::ServiceElementType::EVENT, "EventX", std::vector<std::uint8_t>{});
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), GatewayErrorc::kUnknownServiceElement);
 }

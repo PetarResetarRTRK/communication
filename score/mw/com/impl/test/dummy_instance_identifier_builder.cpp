@@ -75,6 +75,12 @@ InstanceIdentifier DummyInstanceIdentifierBuilder::CreateValidLolaInstanceIdenti
     return make_InstanceIdentifier(*instance_deployment_, type_deployment_);
 }
 
+void DummyInstanceIdentifierBuilder::SetInterVmFlags(const bool inter_vm_support, const bool inter_vm_forwarded)
+{
+    service_instance_deployment_.inter_vm_support_ = inter_vm_support;
+    service_instance_deployment_.inter_vm_forwarded_ = inter_vm_forwarded;
+}
+
 InstanceIdentifier DummyInstanceIdentifierBuilder::CreateValidLolaInstanceIdentifierWithField(
     const LolaServiceInstanceDeployment::FieldInstanceMapping& fields)
 {
