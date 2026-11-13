@@ -210,7 +210,10 @@ Triggered when a previously forwarded service disappears on the source side.
 2. On the source side, `GatewayApplication` calls `Transport::StopOfferService(InstanceSpecifier)`.
 3. The transport layer forwards a `StopOfferService` message to the destination gateway.
 4. On the destination side, the transport layer calls `GatewayCore::StopOfferService(InstanceSpecifier)`.
-5. On the destination side, `GatewayApplication` calls `GenericSkeleton::StopOfferService()`.
+5. On the destination side, `GatewayApplication` calls `GenericSkeleton::StopOfferService()`. A `Forwarding Skeleton`
+   with shm-objects of its own (TCP data transfer, see [Gateway Types](#gateway-types)) is then destroyed, since
+   offering the same skeleton again could terminate the gateway; a later `ProvideService` creates a fresh one. A
+   `Forwarding Skeleton` with `interVmForwarded` is kept and offered again by a later `ProvideService`.
    > **Important:** The `GenericSkeleton` instance is **kept alive** (not destroyed). Destroying it would
    > zero the shared-memory `EventSubscriptionControl`, crashing any local consumer proxy that still holds an
    > active subscription. The skeleton is reused if the service reappears (see step 9 of Service Provision).
@@ -280,8 +283,10 @@ or loses the connection to the remote gateway.
 
 1. When the connection is lost, the transport layer calls `GatewayCore::OnRemoteGatewayDisconnected()`. The service
    instances provided via the remote gateway might not be available anymore (e.g. since the remote VM restarted), so
-   `GatewayApplication` stop-offers all its `Forwarding Skeleton`s. They are kept and offered again, when the remote
-   gateway provides the service instances again (see step 9 of [Service Provision](#service-provision)).
+   `GatewayApplication` stop-offers its `Forwarding Skeleton`s with `interVmForwarded`. They are kept and offered
+   again, when the remote gateway provides the service instances again (see step 9 of
+   [Service Provision](#service-provision)). `Forwarding Skeleton`s with shm-objects of their own (TCP data transfer)
+   stay offered, and are reused then.
 2. When the connection is (re-)established, the transport layer calls `GatewayCore::OnRemoteGatewayConnected()`. The
    remote gateway may have been restarted or may have stop-offered its `Forwarding Skeleton`s, so
    `GatewayApplication` re-propagates all forwarded service instances, which are currently available locally (see

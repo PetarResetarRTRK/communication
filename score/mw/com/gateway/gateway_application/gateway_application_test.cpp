@@ -1260,13 +1260,48 @@ TEST_F(GatewayApplicationFlowTest, StopOfferServiceWithExistingSkeletonStopsOffe
     ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
 
     // When StopOfferService is called
-    // Then it does not crash and keeps the skeleton for reuse.
+    // Then it does not crash.
     EXPECT_NO_FATAL_FAILURE(app_->StopOfferService(MakeSpecifier("svc/a")));
+}
+
+TEST_F(GatewayApplicationFlowTest, StopOfferServiceTearsDownSkeletonWithOwnShmObjects)
+{
+    // Given a service has been provided, whose forwarding skeleton has shm-objects of its own (TCP data transfer)
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+
+    // When StopOfferService is called
+    app_->StopOfferService(MakeSpecifier("svc/a"));
+
+    // Then the skeleton is gone: offering it fails, and providing the service again creates a fresh skeleton
+    const auto offer_result = app_->OfferService(MakeSpecifier("svc/a"));
+    ASSERT_FALSE(offer_result.has_value());
+    EXPECT_EQ(offer_result.error(), GatewayErrorc::kSkeletonOfferFailed);
+
+    EXPECT_CALL(skeleton_binding_factory_mock_guard_.factory_mock_, Create(::testing::_)).Times(1);
+    EXPECT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+}
+
+TEST_F(GatewayApplicationFlowTest, StopOfferServiceKeepsInterVmForwardedSkeletonForReuse)
+{
+    // Given a service has been provided, whose forwarding skeleton is interVmForwarded
+    resolved_inter_vm_support_ = true;
+    resolved_inter_vm_forwarded_ = true;
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+
+    // When StopOfferService is called
+    app_->StopOfferService(MakeSpecifier("svc/a"));
+
+    // Then the skeleton is kept: providing the service again reuses it, without creating a new one
+    EXPECT_CALL(skeleton_binding_factory_mock_guard_.factory_mock_, Create(::testing::_)).Times(0);
+    EXPECT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
 }
 
 TEST_F(GatewayApplicationFlowTest, RemoteGatewayDisconnectedStopOffersForwardingSkeletons)
 {
-    // Given a service, which has been provided via the remote gateway (skeleton exists and is offered)
+    // Given a service, which has been provided via the remote gateway (skeleton exists and is offered), and whose
+    // forwarding skeleton is interVmForwarded
+    resolved_inter_vm_support_ = true;
+    resolved_inter_vm_forwarded_ = true;
     ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
     ASSERT_NE(skeleton_binding_mock_, nullptr);
 
@@ -1280,9 +1315,29 @@ TEST_F(GatewayApplicationFlowTest, RemoteGatewayDisconnectedStopOffersForwarding
     ::testing::Mock::VerifyAndClearExpectations(skeleton_binding_mock_);
 }
 
+TEST_F(GatewayApplicationFlowTest, RemoteGatewayDisconnectedKeepsSkeletonsWithOwnShmObjectsOffered)
+{
+    // Given a service, which has been provided via the remote gateway (skeleton exists and is offered), and whose
+    // forwarding skeleton has shm-objects of its own (TCP data transfer)
+    ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
+    ASSERT_NE(skeleton_binding_mock_, nullptr);
+
+    // Expecting that the skeleton stays offered
+    EXPECT_CALL(*skeleton_binding_mock_, PrepareStopOffer(::testing::_)).Times(0);
+
+    // When the connection to the remote gateway is lost
+    app_->OnRemoteGatewayDisconnected();
+
+    // Verify now, since the destruction of the application would stop-offer the skeleton.
+    ::testing::Mock::VerifyAndClearExpectations(skeleton_binding_mock_);
+}
+
 TEST_F(GatewayApplicationFlowTest, ForwardingSkeletonIsOfferedAgainWhenProvidedAgainAfterDisconnect)
 {
-    // Given a service, which has been provided via the remote gateway and stop-offered, since the connection got lost
+    // Given a service, which has been provided via the remote gateway and stop-offered, since the connection got lost,
+    // and whose forwarding skeleton is interVmForwarded
+    resolved_inter_vm_support_ = true;
+    resolved_inter_vm_forwarded_ = true;
     ASSERT_TRUE(app_->ProvideService(MakeSpecifier("svc/a"), MakeElements({"EventA"})).has_value());
     app_->OnRemoteGatewayDisconnected();
 

@@ -36,11 +36,8 @@ struct ShmSizes
 
 /// \brief Transport layer, which exchanges the messages between the gateways via the BidirectionalTransport (POSIX
 ///        sockets).
-/// \details It supports memory sharing: The shm-objects of service instances with interVmSupport are placed into the
-///          inter-VM shared memory region by the inter-VM memory provider of every process on both VMs (see
-///          score/memory/shared/intervm and global/interVmSharedMemory in the mw::com configuration). So the
-///          shm-objects created on the source VM are already accessible on the destination VM and the transport layer
-///          doesn't have to make them accessible itself.
+/// \details The shm-objects of service instances with interVmSupport are already in the inter-VM shared memory region
+///          (see score/memory/shared/intervm), so the transport layer doesn't have to make them accessible itself.
 class SampleHyperVisorTransport : public Transport
 {
   public:

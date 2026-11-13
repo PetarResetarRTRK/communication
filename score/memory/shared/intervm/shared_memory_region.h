@@ -31,14 +31,10 @@ namespace score::memory::shared
 {
 
 /// \brief Provider for inter-VM shared memory, which places all named shm-objects into a single shared memory region.
-/// \details The region is provided by the hypervisor (e.g. a region of the QNX hypervisor's shmem device) and is
-///          accessible on every VM via a file: On the hypervisor host it is a POSIX shm-object (e.g.
-///          /dev/shmem/QVMSHM-<name> on QNX), within a guest it is the device node of the driver of the shared memory
-///          device. The file has to support mmap() with offsets. The region may start at an offset within the file,
-///          e.g. behind the control page of the shared memory device. It starts with a SharedMemoryRegionDirectory,
-///          which maps the names of the shm-objects to their location in the region. Every process, which creates or
-///          opens inter-VM shm-objects, uses its own instance on the same region. The region is opened lazily, when the
-///          first shm-object is created or opened, so that a missing region is reported as an error of that call.
+/// \details The region is memory shared by the hypervisor. Each VM accesses it via a file, which supports mmap() with
+///          offsets (e.g. a POSIX shm-object on the QNX host, /dev/mem on a Linux guest). It starts with a
+///          SharedMemoryRegionDirectory, which maps the names of the shm-objects to their locations. The region is
+///          opened lazily by the first create or open, so that a missing region is reported as an error of that call.
 class SharedMemoryRegion final : public TypedMemory
 {
   public:

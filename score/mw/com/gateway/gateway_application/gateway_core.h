@@ -95,18 +95,14 @@ class GatewayCore
                                              std::string updated_element_name,
                                              std::vector<std::uint8_t> updated_element_data) = 0;
 
-    /// \brief Informs the gateway application, that the connection to the remote gateway has been (re-)established.
-    /// \details The remote gateway may have been restarted, or may have stop-offered its forwarding skeletons, when it
-    /// lost the connection (see OnRemoteGatewayDisconnected()). So the gateway application re-propagates its currently
-    /// available local service instances. Transport layer implementations, which don't report the connection state,
-    /// don't call it.
+    /// \brief Informs the gateway application, that the connection to the remote gateway has been (re-)established, so
+    ///        it re-propagates its local service instances: the remote gateway may have restarted or stop-offered its
+    ///        forwarding skeletons. Not called by transport layers, which don't report the connection state.
     virtual void OnRemoteGatewayConnected() {}
 
-    /// \brief Informs the gateway application, that the connection to the remote gateway has been lost.
-    /// \details The service instances provided via the remote gateway might not be available anymore (e.g. since the
-    /// remote VM restarted). So the gateway application stop-offers its forwarding skeletons, until the remote gateway
-    /// provides the service instances again after reconnecting. Transport layer implementations, which don't report the
-    /// connection state, don't call it.
+    /// \brief Informs the gateway application, that the connection to the remote gateway has been lost, so it may
+    ///        stop-offer forwarding skeletons until the remote gateway provides their service instances again. Not
+    ///        called by transport layers, which don't report the connection state.
     virtual void OnRemoteGatewayDisconnected() {}
 };
 

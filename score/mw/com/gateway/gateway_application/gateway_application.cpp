@@ -37,7 +37,7 @@ namespace score::mw::com::gateway
 
 namespace
 {
-// Subscribe with 1 sample — the gateway needs the notification that data changed, and for copied instances the newest
+// Subscribe with 1 sample: the gateway needs the notification that data changed, and for copied instances the newest
 // sample (see GetInterVmFlags()). For shared instances, the consumers read the data directly from shared memory.
 constexpr std::size_t kGatewaySubscribeSamples = 1U;
 
@@ -266,8 +266,7 @@ void GatewayApplication::PropagateService(const std::string& specifier_str)
 void GatewayApplication::OnRemoteGatewayConnected()
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    // The remote gateway may have been restarted or may have stop-offered its forwarding skeletons on connection loss.
-    // Since the local service discovery doesn't report the (unchanged) local services again, they are re-propagated.
+    // The service discovery doesn't report unchanged local services again, so they are re-propagated here.
     for (const auto& specifier_str : available_services_)
     {
         score::mw::log::LogInfo() << "GatewayApplication: Remote gateway connected, re-propagating: " << specifier_str;
@@ -278,11 +277,14 @@ void GatewayApplication::OnRemoteGatewayConnected()
 void GatewayApplication::OnRemoteGatewayDisconnected()
 {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    // The service instances provided via the remote gateway might not be available anymore (e.g. since the remote VM
-    // restarted). The forwarding skeletons are kept, so that they get offered again, when the remote gateway provides
-    // the service instances again after reconnecting (see ProvideService()).
+    // Only skeletons with interVmForwarded are stop-offered (and kept). Skeletons with shm-objects of their own stay
+    // offered, since offering the same object again could terminate the gateway (see StopOfferService()).
     for (auto& [specifier_str, skeleton] : skeletons_)
     {
+        if (!GetInterVmFlags(specifier_str).inter_vm_forwarded)
+        {
+            continue;
+        }
         score::mw::log::LogInfo() << "GatewayApplication: Remote gateway disconnected, stop offering " << specifier_str;
         skeleton.StopOfferService();
     }
@@ -423,6 +425,7 @@ score::Result<void> GatewayApplication::ProvideService(score::mw::com::InstanceS
     auto existing_it = skeletons_.find(service_instance_specifier_str);
     if (existing_it != skeletons_.end())
     {
+        // A kept skeleton may be stop-offered (see StopOfferService() and OnRemoteGatewayDisconnected()).
         // Reuse the existing skeleton. Creating a new one would do placement-new on the SHM
         // EventSubscriptionControl, zeroing it while the local consumer proxy still holds an
         // active subscription — causing a fatal Unsubscribe assertion crash at shutdown.
@@ -488,11 +491,24 @@ void GatewayApplication::StopOfferService(score::mw::com::InstanceSpecifier serv
         return;
     }
 
-    // Stop offering but keep the skeleton. The source side may decide to re-offer anytime, then we need our skeleton
-    // anyhow.
     it->second.StopOfferService();
-    score::mw::log::LogInfo() << "GatewayApplication: Stopped offering " << service_instance_specifier
-                              << " (skeleton kept for reuse)";
+
+    // A skeleton with interVmForwarded uses the provider's shm-objects, which it never creates nor removes. So stop
+    // offering but keep the skeleton: the source side may decide to re-offer anytime, then we need our skeleton anyhow.
+    if (GetInterVmFlags(service_instance_specifier_str).inter_vm_forwarded)
+    {
+        score::mw::log::LogInfo() << "GatewayApplication: Stopped offering " << service_instance_specifier
+                                  << " (skeleton kept for reuse)";
+        return;
+    }
+
+    // A skeleton with shm-objects of its own (TCP data transfer) is destroyed, not only stop-offered: if a local proxy
+    // was still attached, PrepareStopOffer() didn't reset the skeleton's memory manager, and offering the same object
+    // again could hit the RemoveStaleArtefacts assertion and terminate the gateway. ProvideService() creates a fresh
+    // skeleton, when the source side re-offers.
+    skeletons_.erase(it);
+    score::mw::log::LogInfo() << "GatewayApplication: Stopped offering and reset skeleton for "
+                              << service_instance_specifier;
 }
 
 score::Result<void> GatewayApplication::OfferService(score::mw::com::InstanceSpecifier service_instance_specifier)
